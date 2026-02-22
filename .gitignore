@@ -1,0 +1,40 @@
+# Environment / secrets — NEVER commit these
+.env
+
+# Claude Code local settings
+.claude/
+
+# Training data (generated — too large for git)
+data/*
+!data/.gitkeep
+
+# Fitted model artifacts (regenerate from scripts)
+model/*
+!model/.gitkeep
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
