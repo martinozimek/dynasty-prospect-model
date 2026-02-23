@@ -453,6 +453,11 @@ def main() -> None:
         help="Minimum college games to qualify a season for 'best season' metrics (default: 6).",
     )
     parser.add_argument(
+        "--min-link-score", type=float, default=80.0,
+        help="Drop training rows whose CFB link match_score is below this threshold "
+             "(default: 80). Rows below this are likely wrong links.",
+    )
+    parser.add_argument(
         "--verbose", action="store_true",
         help="Print per-player details.",
     )
@@ -504,6 +509,62 @@ def main() -> None:
         "Skipped: %d no CFB link, %d no qualifying college season",
         skipped_no_link, skipped_no_seasons,
     )
+
+    # Deduplicate by cfb_player_id within each position.
+    # When multiple NFL player names share the same CFB player ID — either because
+    # nflverse records the same player under two name spellings (e.g. "Laviska Shenault"
+    # and "Laviska Shenault Jr."), or because a fuzzy match wrongly links a different
+    # NFL player to the same CFB record — keep only the highest-match-score row.
+    # Tie-break: higher b2s_score (the name variant with more complete NFL data).
+    dedup_dropped = 0
+    for pos in _POSITIONS:
+        seen: dict[int, dict] = {}
+        for r in rows_by_pos[pos]:
+            pid = r["cfb_player_id"]
+            if pid not in seen:
+                seen[pid] = r
+            else:
+                prev = seen[pid]
+                this_better = (r["match_score"] or 0) > (prev["match_score"] or 0) or (
+                    (r["match_score"] or 0) == (prev["match_score"] or 0)
+                    and (r["b2s_score"] or 0) > (prev["b2s_score"] or 0)
+                )
+                loser, winner = (prev, r) if this_better else (r, prev)
+                logger.warning(
+                    "  [dedup %s] dropping %r (score=%.0f, b2s=%.2f) — "
+                    "same cfb_player_id as %r (score=%.0f, b2s=%.2f)",
+                    pos,
+                    loser["nfl_name"], loser["match_score"] or 0, loser["b2s_score"] or 0,
+                    winner["nfl_name"], winner["match_score"] or 0, winner["b2s_score"] or 0,
+                )
+                seen[pid] = winner
+                dedup_dropped += 1
+        rows_by_pos[pos] = list(seen.values())
+    if dedup_dropped:
+        logger.info("Deduplication: removed %d rows with duplicate cfb_player_id.", dedup_dropped)
+
+    # Drop rows with low link confidence. Links below min_link_score are likely
+    # wrong matches (different player with similar name) — their CFB features do
+    # not represent the actual NFL player, poisoning the training signal.
+    low_score_dropped = 0
+    for pos in _POSITIONS:
+        before = len(rows_by_pos[pos])
+        rows_by_pos[pos] = [
+            r for r in rows_by_pos[pos]
+            if (r.get("match_score") or 0) >= args.min_link_score
+        ]
+        dropped = before - len(rows_by_pos[pos])
+        if dropped:
+            logger.warning(
+                "  [link-score filter %s] dropped %d rows with match_score < %.0f",
+                pos, dropped, args.min_link_score,
+            )
+            low_score_dropped += dropped
+    if low_score_dropped:
+        logger.info(
+            "Link-score filter: removed %d rows with match_score < %.0f.",
+            low_score_dropped, args.min_link_score,
+        )
 
     # Write CSVs
     for pos in _POSITIONS:
