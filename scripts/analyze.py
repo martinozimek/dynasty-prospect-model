@@ -83,15 +83,34 @@ _NON_FEATURES = {
 }
 
 _BASE_FEATURES = [
+    # Core ZAP metrics
     "best_rec_rate", "best_dominator", "best_reception_share",
-    "best_age", "best_games", "best_sp_plus", "best_ppa_pass", "best_usage",
+    "best_age", "breakout_age",
+    "best_games", "best_sp_plus",
+    "best_ppa_pass", "best_ppa_overall", "best_ppa_rush",
+    "best_usage", "best_usage_pass", "best_usage_rush",
+    # Best season per-play rates
+    "best_catch_rate", "best_td_rate", "best_ypr", "best_ypt",
+    "best_rush_ypc", "best_yards_per_touch",
+    "college_fantasy_ppg",
+    # Best season counting stats
+    "best_rec_yards", "best_receptions", "best_targets",
+    "best_rec_tds", "best_rush_tds",
+    # Career totals
     "career_seasons", "career_rec_yards", "career_rush_yards",
-    "career_targets", "career_rec_per_target", "early_declare",
+    "career_targets", "career_receptions", "career_rush_attempts",
+    "career_rec_tds", "career_rush_tds", "career_total_tds",
+    "career_rec_per_target", "early_declare",
+    # Combine / athleticism
     "weight_lbs", "forty_time", "speed_score", "height_inches",
-    "vertical_jump", "broad_jump",
+    "vertical_jump", "broad_jump", "three_cone", "shuttle", "bench_press",
+    # Draft position
     "draft_capital_score", "draft_round", "overall_pick",
+    # Recruiting
     "recruit_rating", "recruit_stars",
+    # Pre-draft market expectation
     "consensus_rank", "position_rank",
+    # Team context
     "teammate_score",
 ]
 
@@ -103,46 +122,85 @@ _ERA_WINDOWS = [
 ]
 
 _JJ_FEATURES = [
-    "best_dominator", "best_age", "draft_capital_score",
-    "speed_score", "career_rec_per_target",
+    "best_dominator", "best_age", "breakout_age", "draft_capital_score",
+    "speed_score", "career_rec_per_target", "best_rec_rate", "recruit_rating",
+    "college_fantasy_ppg",
 ]
 
 _JJ_CLAIMS = {
-    "best_dominator":        ">20% = good signal for any position",
-    "best_age":              "Younger breakout = better (WR especially)",
-    "draft_capital_score":   "Strong correlation with NFL success",
-    "speed_score":           "Most predictive for RBs; secondary for WR",
-    "career_rec_per_target": "YPRR proxy; signal for pass-catchers",
+    "best_dominator":        ">20% = strong signal (rec_yds% + rec_td%)/2",
+    "best_age":              "Younger at peak = better; WR especially",
+    "breakout_age":          "<20 at first 20%+ dom season = elite signal",
+    "draft_capital_score":   "Strongest single predictor of NFL success",
+    "speed_score":           "Most predictive for RBs; (wt*200)/40^4",
+    "career_rec_per_target": "YPRR proxy; yards per target career",
+    "best_rec_rate":         "Rec yds / team pass att — ZAP rec rate",
+    "recruit_rating":        "Elite recruits signal ceiling",
+    "college_fantasy_ppg":   "PPR fantasy PPG in best college season",
 }
 
 _FEATURE_LABELS = {
+    # Core ZAP
     "best_rec_rate":              "Rec Rate (yd/team_att) — ZAP",
-    "best_dominator":             "Dominator Rating (rec_yd/team_rec_yd)",
+    "best_dominator":             "Dominator Rating (rec_yd%+rec_td%)/2",
     "best_reception_share":       "Reception Share",
     "best_age":                   "Age at Best College Season",
+    "breakout_age":               "Breakout Age (first dom>=threshold)",
     "best_games":                 "Games Played (Best Season)",
     "best_sp_plus":               "Team SP+ Rating (SOS)",
-    "best_ppa_pass":              "PPA Pass (Team Efficiency)",
+    "best_ppa_pass":              "PPA Pass (EPA per pass play)",
+    "best_ppa_overall":           "PPA Overall (EPA per play)",
+    "best_ppa_rush":              "PPA Rush (EPA per rush play)",
     "best_usage":                 "Usage Rate (Best Season)",
+    "best_usage_pass":            "Pass Usage Rate (Best Season)",
+    "best_usage_rush":            "Rush Usage Rate (Best Season)",
+    # Best season rates
+    "best_catch_rate":            "Catch Rate (rec/target)",
+    "best_td_rate":               "TD Rate (rec_td/target)",
+    "best_ypr":                   "Yards Per Reception (best season)",
+    "best_ypt":                   "Yards Per Target (best season)",
+    "best_rush_ypc":              "Rush Yards Per Carry (best season)",
+    "best_yards_per_touch":       "Yards Per Touch (rec+rush)",
+    "college_fantasy_ppg":        "College Fantasy PPG (PPR equiv.)",
+    # Best season counting
+    "best_rec_yards":             "Receiving Yards (Best Season)",
+    "best_receptions":            "Receptions (Best Season)",
+    "best_targets":               "Targets (Best Season)",
+    "best_rec_tds":               "Receiving TDs (Best Season)",
+    "best_rush_tds":              "Rushing TDs (Best Season)",
+    # Career totals
     "career_seasons":             "Career Seasons Played",
     "career_rec_yards":           "Career Receiving Yards",
     "career_rush_yards":          "Career Rushing Yards",
     "career_targets":             "Career Targets",
-    "career_rec_per_target":      "Career Yards Per Target",
+    "career_receptions":          "Career Receptions",
+    "career_rush_attempts":       "Career Rush Attempts",
+    "career_rec_tds":             "Career Receiving TDs",
+    "career_rush_tds":            "Career Rushing TDs",
+    "career_total_tds":           "Career Total TDs",
+    "career_rec_per_target":      "Career Yards Per Target (proxy YPRR)",
     "early_declare":              "Early Declare (<=3 Seasons)",
+    # Combine
     "weight_lbs":                 "Weight (lbs)",
     "forty_time":                 "40-Yard Dash (sec)",
     "speed_score":                "Speed Score ((wt*200)/40^4)",
     "height_inches":              "Height (inches)",
     "vertical_jump":              "Vertical Jump (in)",
     "broad_jump":                 "Broad Jump (in)",
+    "three_cone":                 "3-Cone Drill (sec)",
+    "shuttle":                    "20-Yd Shuttle (sec)",
+    "bench_press":                "Bench Press Reps (225 lbs)",
+    # Draft
     "draft_capital_score":        "Draft Capital Score (0-100)",
     "draft_round":                "Draft Round",
     "overall_pick":               "Overall Pick Number",
+    # Recruiting
     "recruit_rating":             "Recruit Rating (247Sports)",
     "recruit_stars":              "Recruit Stars",
+    # Pre-draft market
     "consensus_rank":             "Consensus Big Board Rank",
     "position_rank":              "Position Group Board Rank",
+    # Team context
     "teammate_score":             "Teammate Draft Capital",
     # Derived
     "dominator_x_rate":          "Dominator x Rec Rate",
@@ -161,6 +219,9 @@ _FEATURE_LABELS = {
     "ypr":                       "Career Yards Per Target (YPR)",
     "draft_premium":             "(100 - Big Board Rank) / 100",
     "career_yardage":            "Career Rec + Rush Yards",
+    "breakout_x_capital":        "Breakout Age Inverted x Draft Capital",
+    "college_fpg_x_capital":     "College Fantasy PPG x Draft Capital",
+    "dominator_x_breakout":      "Dominator x Breakout Youth",
 }
 
 _MISSING_CAUSES = {
@@ -174,8 +235,25 @@ _MISSING_CAUSES = {
     "height_inches":      "Combine non-attenders",
     "vertical_jump":      "Combine non-attenders",
     "broad_jump":         "Combine non-attenders",
+    "three_cone":         "Combine non-attenders (many skill players skip)",
+    "shuttle":            "Combine non-attenders",
+    "bench_press":        "Many skill players skip bench press at combine",
     "best_ppa_pass":      "CFBD coverage sparse 2011-2013",
+    "best_ppa_overall":   "CFBD coverage sparse 2011-2013",
+    "best_ppa_rush":      "CFBD coverage sparse 2011-2013",
     "best_usage":         "CFBD coverage sparse 2011-2013",
+    "best_usage_pass":    "CFBD coverage sparse 2011-2013",
+    "best_usage_rush":    "CFBD coverage sparse 2011-2013",
+    "breakout_age":       "None if player never crossed dominator threshold",
+    "best_rush_ypc":      "WR/TE: few rush attempts — mostly None",
+    # Permanently unavailable (paid/NFL-only) — documented in report
+    "air_yards":          "NFL tracking data — unavailable free",
+    "snap_share":         "NFL data — unavailable free",
+    "adot":               "NFL charting data — unavailable free",
+    "yprr":               "PFF+ college routes required",
+    "juke_rate":          "PlayerProfiler paid metric",
+    "yards_created":      "PlayerProfiler paid metric",
+    "target_separation":  "NFL Next Gen Stats (restricted)",
 }
 
 
@@ -241,6 +319,15 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     df["career_yardage"] = df["career_rec_yards"] + df["career_rush_yards"]
     # Pre-draft market signal
     df["draft_premium"] = (100 - df["consensus_rank"].clip(upper=300)) / 100
+    # Breakout age interaction terms
+    # Invert breakout_age: younger breakout = higher value (21 - age); floor at 0
+    if "breakout_age" in df.columns:
+        breakout_youth = (21 - df["breakout_age"]).clip(lower=0)
+        df["breakout_x_capital"]    = breakout_youth * df["draft_capital_score"]
+        df["dominator_x_breakout"]  = df["best_dominator"] * breakout_youth
+    # College fantasy PPG interaction
+    if "college_fantasy_ppg" in df.columns:
+        df["college_fpg_x_capital"] = df["college_fantasy_ppg"] * df["draft_capital_score"]
     return df
 
 
@@ -1416,12 +1503,18 @@ def _fig_missing_inventory(
         "   players more likely to skip). Consider indicator variable.\n\n"
         "4. best_ppa_pass / best_usage (early CFBD gap)\n"
         "   Cause: CFBD did not track PPA/usage in 2011-2013 seasons.\n\n"
-        "5. College routes run (YPRR) - entirely unavailable free\n"
+        "5. College routes run (YPRR) — entirely unavailable free\n"
         "   career_rec_per_target is a weak proxy only.\n"
         "   Fix: PFF+ (~$200/yr) for true YPRR back to 2014.\n\n"
-        "6. A.J. Brown (WR 2019, b2s=15.80) and ~5 others missing\n"
+        "6. NFL-level metrics — permanently unavailable free:\n"
+        "   Air yards, snap share, ADOT, deep targets, YAC,\n"
+        "   target separation: NFL tracking/charting data.\n"
+        "   Juke rate, yards created, evaded tackles, explosive\n"
+        "   rating, breakaway runs: PlayerProfiler paid (~$20/mo).\n"
+        "   Contested catch rating: PFF+ paid.\n\n"
+        "7. A.J. Brown (WR 2019, b2s=15.80) and ~5 others missing\n"
         "   Wrong link in CFBLink. Needs manual cfb_player_id fix.\n\n"
-        "7. 2026 combine data not yet ingested\n"
+        "8. 2026 combine data not yet ingested\n"
         "   Fix: populate_nfl.py --combine-years 2026 after combine."
     )
     ax_l.text(0, 1, narrative, va="top", ha="left", fontsize=7.5,
@@ -1445,7 +1538,11 @@ def _fig_missing_inventory(
         "    -> Particularly improves TE model\n"
         "  * Manual CFBLink fixes (A.J. Brown + ~5 others)\n"
         "    -> Restores star players to WR training set\n"
-        "  * PlayerProfiler athleticism tiers (~$20/mo)\n\n"
+        "  * PlayerProfiler athleticism tiers (~$20/mo)\n"
+        "    -> Juke rate, yards created, breakaway runs\n"
+        "    -> Could add meaningful signal for RBs\n"
+        "  * PFF+ (~$200/yr) for college YPRR + contested catch\n"
+        "    -> Strong TE signal expected from YPRR\n\n"
         "FUTURE MODEL ENHANCEMENTS:\n"
         "  * Format-specific B2S targets (te_premium_1.0)\n"
         "  * Penalty-adjusted PPG (fumbles_lost, INTs)\n"

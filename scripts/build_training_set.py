@@ -143,12 +143,17 @@ def _load_cfb(cfb_db_path: str) -> dict:
                 "rec_tds": row.rec_tds,
                 "rush_yards": row.rush_yards,
                 "rush_attempts": row.rush_attempts,
+                "rush_tds": row.rush_tds,
                 "rec_yards_per_team_pass_att": row.rec_yards_per_team_pass_att,
                 "dominator_rating": row.dominator_rating,
                 "reception_share": row.reception_share,
                 "age_at_season_start": row.age_at_season_start,
                 "ppa_avg_pass": row.ppa_avg_pass,
+                "ppa_avg_overall": row.ppa_avg_overall,
+                "ppa_avg_rush": row.ppa_avg_rush,
                 "usage_overall": row.usage_overall,
+                "usage_pass": row.usage_pass,
+                "usage_rush": row.usage_rush,
             })
         result["seasons"] = dict(seasons)
 
@@ -183,6 +188,9 @@ def _load_cfb(cfb_db_path: str) -> dict:
                 "height_inches_combine": row.height_inches,
                 "vertical_jump": row.vertical_jump,
                 "broad_jump": row.broad_jump,
+                "three_cone": row.three_cone,
+                "shuttle": row.shuttle,
+                "bench_press": row.bench_press,
             }
             for row in s.query(NFLCombineResult).all()
         }
@@ -280,6 +288,40 @@ def _best_season(
     return max(qualifying, key=lambda s: s.get(metric) or 0.0)
 
 
+# CFBD dominator_rating = (rec_yards_pct + rec_td_pct) / 2 — receiving production only.
+# For WR/TE, 20% is JJ Zachariason's standard breakout threshold.
+# For RB, CFBD dominator is receiving-only (does not include rushing), so the proper
+# JJ threshold (15%) is too high — only ~6% of RBs clear it. Use 0.10 (top-quartile
+# receiving RBs) as the breakout signal: first season where a RB posted 10%+ receiving
+# dominator = early "pass-catching back" signal in college.
+_BREAKOUT_THRESHOLD = {"WR": 0.20, "TE": 0.20, "RB": 0.10}
+
+
+def _breakout_age(
+    seasons: list[dict],
+    position: str,
+    min_games: int = 6,
+) -> float | None:
+    """
+    Return the age at which the player first posted a dominator_rating at or above
+    the position threshold in a qualifying season (>= min_games).
+
+    JJ Zachariason's definition: breakout before age 20 is elite signal.
+    Distinct from best_age (age at highest production season).
+    Returns None if the player never crossed the threshold.
+    """
+    threshold = _BREAKOUT_THRESHOLD.get(position, 0.20)
+    qualifying = sorted(
+        [s for s in seasons if (s.get("games_played") or 0) >= min_games],
+        key=lambda s: s.get("season_year") or 9999,
+    )
+    for s in qualifying:
+        dom = s.get("dominator_rating") or 0.0
+        if dom >= threshold:
+            return s.get("age_at_season_start")
+    return None
+
+
 def _compute_teammate_score(
     player_id: int,
     draft_year: int,
@@ -358,8 +400,58 @@ def _build_row(
     career_rec_yards = sum(s.get("rec_yards") or 0 for s in seasons_raw)
     career_rush_yards = sum(s.get("rush_yards") or 0 for s in seasons_raw)
     career_targets = sum(s.get("targets") or 0 for s in seasons_raw)
+    career_receptions = sum(s.get("receptions") or 0 for s in seasons_raw)
+    career_rush_attempts = sum(s.get("rush_attempts") or 0 for s in seasons_raw)
+    career_rec_tds = sum(s.get("rec_tds") or 0 for s in seasons_raw)
+    career_rush_tds = sum(s.get("rush_tds") or 0 for s in seasons_raw)
+    career_total_tds = career_rec_tds + career_rush_tds
     career_rec_per_target = (
         career_rec_yards / career_targets if career_targets > 0 else None
+    )
+
+    # Breakout age
+    breakout_age = _breakout_age(seasons_raw, position, min_games=min_games)
+
+    # Best season per-play rates
+    best_targets_val = best.get("targets") or 0
+    best_receptions_val = best.get("receptions") or 0
+    best_rec_yards_val = best.get("rec_yards") or 0
+    best_rec_tds_val = best.get("rec_tds") or 0
+    best_rush_yards_val = best.get("rush_yards") or 0
+    best_rush_attempts_val = best.get("rush_attempts") or 0
+    best_rush_tds_val = best.get("rush_tds") or 0
+    best_games_val = best.get("games_played") or 0
+
+    best_catch_rate = (
+        best_receptions_val / best_targets_val if best_targets_val > 0 else None
+    )
+    best_td_rate = (
+        best_rec_tds_val / best_targets_val if best_targets_val > 0 else None
+    )
+    best_ypr = (
+        best_rec_yards_val / best_receptions_val if best_receptions_val > 0 else None
+    )
+    best_ypt = (
+        best_rec_yards_val / best_targets_val if best_targets_val > 0 else None
+    )
+    best_rush_ypc = (
+        best_rush_yards_val / best_rush_attempts_val if best_rush_attempts_val > 0 else None
+    )
+    best_yards_per_touch = (
+        (best_rec_yards_val + best_rush_yards_val) / (best_targets_val + best_rush_attempts_val)
+        if (best_targets_val + best_rush_attempts_val) > 0
+        else None
+    )
+    college_fantasy_ppg = (
+        (
+            best_receptions_val * 1.0
+            + best_rec_yards_val / 10.0
+            + best_rec_tds_val * 6.0
+            + best_rush_yards_val / 10.0
+            + best_rush_tds_val * 6.0
+        ) / best_games_val
+        if best_games_val > 0
+        else None
     )
 
     # Teammate score
@@ -389,7 +481,7 @@ def _build_row(
         "year2_ppg": b2s_data.get("year2_ppg"),
         "year3_ppg": b2s_data.get("year3_ppg"),
         "qualifying_nfl_seasons": b2s_data.get("qualifying_seasons"),
-        # Best college season
+        # Best college season — core ZAP metrics
         "best_rec_rate": best.get("rec_yards_per_team_pass_att"),
         "best_dominator": best.get("dominator_rating"),
         "best_reception_share": best.get("reception_share"),
@@ -399,12 +491,37 @@ def _build_row(
         "best_team": best_team,
         "best_sp_plus": best_team_season.get("sp_plus_rating"),
         "best_ppa_pass": best.get("ppa_avg_pass"),
+        "best_ppa_overall": best.get("ppa_avg_overall"),
+        "best_ppa_rush": best.get("ppa_avg_rush"),
         "best_usage": best.get("usage_overall"),
+        "best_usage_pass": best.get("usage_pass"),
+        "best_usage_rush": best.get("usage_rush"),
+        # Best season counting stats
+        "best_rec_yards": best_rec_yards_val if best_rec_yards_val > 0 else None,
+        "best_receptions": best_receptions_val if best_receptions_val > 0 else None,
+        "best_targets": best_targets_val if best_targets_val > 0 else None,
+        "best_rec_tds": best_rec_tds_val,
+        "best_rush_tds": best_rush_tds_val,
+        # Best season per-play rates
+        "best_catch_rate": best_catch_rate,
+        "best_td_rate": best_td_rate,
+        "best_ypr": best_ypr,
+        "best_ypt": best_ypt,
+        "best_rush_ypc": best_rush_ypc,
+        "best_yards_per_touch": best_yards_per_touch,
+        "college_fantasy_ppg": college_fantasy_ppg,
+        # Breakout age (JJ definition: first season crossing dominator threshold)
+        "breakout_age": breakout_age,
         # Career totals
         "career_seasons": career_seasons,
         "career_rec_yards": career_rec_yards,
         "career_rush_yards": career_rush_yards,
         "career_targets": career_targets,
+        "career_receptions": career_receptions,
+        "career_rush_attempts": career_rush_attempts,
+        "career_rec_tds": career_rec_tds,
+        "career_rush_tds": career_rush_tds,
+        "career_total_tds": career_total_tds,
         "career_rec_per_target": career_rec_per_target,
         "early_declare": int(career_seasons <= 3),
         # Combine
@@ -414,6 +531,9 @@ def _build_row(
         "height_inches": combine.get("height_inches_combine") or player.get("height_inches"),
         "vertical_jump": combine.get("vertical_jump"),
         "broad_jump": combine.get("broad_jump"),
+        "three_cone": combine.get("three_cone"),
+        "shuttle": combine.get("shuttle"),
+        "bench_press": combine.get("bench_press"),
         # Draft
         "draft_capital_score": draft_pick.get("draft_capital_score"),
         "draft_round": draft_pick.get("draft_round"),
