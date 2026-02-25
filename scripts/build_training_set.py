@@ -111,6 +111,7 @@ def _load_cfb(cfb_db_path: str) -> dict:
         CFBTeamSeason,
         NFLCombineResult,
         NFLDraftPick,
+        PFFPlayerSeason,
         Player,
         Recruiting,
         get_session,
@@ -203,15 +204,32 @@ def _load_cfb(cfb_db_path: str) -> dict:
                     "recruit_rating": row.rating,
                     "recruit_stars": row.stars,
                     "recruit_year": row.recruit_year,
+                    "recruit_rank_national": row.ranking_national,
                 }
         result["recruiting"] = recruiting
 
+        # PFF data — best qualifying season by yprr, grouped by player_id.
+        # Will be empty dicts until PFF+ data is ingested via scripts/populate_pff.py.
+        pff: dict[int, dict] = {}
+        for row in s.query(PFFPlayerSeason).order_by(PFFPlayerSeason.yprr.desc().nullslast()).all():
+            if row.player_id not in pff:
+                pff[row.player_id] = {
+                    "best_yprr": row.yprr,
+                    "best_routes_per_game": row.routes_per_game,
+                    "best_receiving_grade": row.receiving_grade,
+                    "best_contested_catch_rate": row.contested_catch_rate,
+                    "best_drop_rate": row.drop_rate,
+                    "best_target_sep": row.target_separation,
+                }
+        result["pff"] = pff
+
     logger.info(
-        "CFB loaded: %d players, %d season groups, %d draft picks, %d combine rows",
+        "CFB loaded: %d players, %d season groups, %d draft picks, %d combine rows, %d PFF rows",
         len(result["players"]),
         len(result["seasons"]),
         len(result["draft_picks"]),
         len(result["combine"]),
+        len(result["pff"]),
     )
     return result
 
@@ -390,6 +408,7 @@ def _build_row(
     draft_pick = cfb["draft_picks"].get(cfb_player_id, {})
     combine = cfb["combine"].get(cfb_player_id, {})
     recruiting = cfb["recruiting"].get(cfb_player_id, {})
+    pff = cfb["pff"].get(cfb_player_id, {})
 
     # Big board — try exact name, then cfb_full_name
     board_key = (nfl_name, draft_year)
@@ -542,6 +561,16 @@ def _build_row(
         "recruit_rating": recruiting.get("recruit_rating"),
         "recruit_stars": recruiting.get("recruit_stars"),
         "recruit_year": recruiting.get("recruit_year"),
+        "recruit_rank_national": recruiting.get("recruit_rank_national"),
+        # PFF metrics — populated from pff_player_seasons when PFF+ data is ingested.
+        # All None until scripts/populate_pff.py --csv <export.csv> is run.
+        # Priority addition: subscribe to PFF+ (~$120/yr) for YPRR back to 2014.
+        "best_yprr": pff.get("best_yprr"),
+        "best_routes_per_game": pff.get("best_routes_per_game"),
+        "best_receiving_grade": pff.get("best_receiving_grade"),
+        "best_contested_catch_rate": pff.get("best_contested_catch_rate"),
+        "best_drop_rate": pff.get("best_drop_rate"),
+        "best_target_sep": pff.get("best_target_sep"),
         # Pre-draft market expectation
         "consensus_rank": board.get("consensus_rank"),
         "position_rank": board.get("position_rank"),

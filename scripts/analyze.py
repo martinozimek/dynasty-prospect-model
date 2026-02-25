@@ -104,14 +104,18 @@ _BASE_FEATURES = [
     # Combine / athleticism
     "weight_lbs", "forty_time", "speed_score", "height_inches",
     "vertical_jump", "broad_jump", "three_cone", "shuttle", "bench_press",
+    "agility_score",
     # Draft position
     "draft_capital_score", "draft_round", "overall_pick",
     # Recruiting
-    "recruit_rating", "recruit_stars",
+    "recruit_rating", "recruit_stars", "recruit_rank_national",
     # Pre-draft market expectation
     "consensus_rank", "position_rank",
     # Team context
     "teammate_score",
+    # PFF stubs — zero coverage until PFF+ data ingested; retained for future use
+    "best_yprr", "best_routes_per_game", "best_receiving_grade",
+    "best_contested_catch_rate", "best_drop_rate", "best_target_sep",
 ]
 
 _ERA_WINDOWS = [
@@ -190,6 +194,7 @@ _FEATURE_LABELS = {
     "three_cone":                 "3-Cone Drill (sec)",
     "shuttle":                    "20-Yd Shuttle (sec)",
     "bench_press":                "Bench Press Reps (225 lbs)",
+    "agility_score":              "Agility Composite (3-cone+shuttle)/2",
     # Draft
     "draft_capital_score":        "Draft Capital Score (0-100)",
     "draft_round":                "Draft Round",
@@ -197,6 +202,7 @@ _FEATURE_LABELS = {
     # Recruiting
     "recruit_rating":             "Recruit Rating (247Sports)",
     "recruit_stars":              "Recruit Stars",
+    "recruit_rank_national":      "National Recruit Ranking",
     # Pre-draft market
     "consensus_rank":             "Consensus Big Board Rank",
     "position_rank":              "Position Group Board Rank",
@@ -222,6 +228,15 @@ _FEATURE_LABELS = {
     "breakout_x_capital":        "Breakout Age Inverted x Draft Capital",
     "college_fpg_x_capital":     "College Fantasy PPG x Draft Capital",
     "dominator_x_breakout":      "Dominator x Breakout Youth",
+    "agility_score":             "Agility Composite (3-cone+shuttle)/2",
+    # PFF stubs
+    "best_yprr":                 "YPRR — Yards Per Route Run [PFF+]",
+    "best_routes_per_game":      "Routes Per Game (Best Season) [PFF+]",
+    "best_receiving_grade":      "PFF Receiving Grade 0-100 [PFF+]",
+    "best_contested_catch_rate": "Contested Catch Rate [PFF+]",
+    "best_drop_rate":            "Drop Rate (lower=better) [PFF+]",
+    "best_target_sep":           "Target Separation Yards [PFF+]",
+    "yprr_x_capital":            "YPRR x Draft Capital [PFF+]",
 }
 
 _MISSING_CAUSES = {
@@ -246,11 +261,19 @@ _MISSING_CAUSES = {
     "best_usage_rush":    "CFBD coverage sparse 2011-2013",
     "breakout_age":       "None if player never crossed dominator threshold",
     "best_rush_ypc":      "WR/TE: few rush attempts — mostly None",
+    "agility_score":      "Derived from three_cone + shuttle; same coverage as those fields",
+    "recruit_rank_national": "Same as recruit_rating — CFBD quota gap 2011-2017",
+    # PFF+ stubs — priority addition (see data planning table)
+    "best_yprr":             "PFF+ required — $120/yr; college historical back to 2014",
+    "best_routes_per_game":  "PFF+ required",
+    "best_receiving_grade":  "PFF+ required",
+    "best_contested_catch_rate": "PFF+ required",
+    "best_drop_rate":        "PFF+ required",
+    "best_target_sep":       "PFF+ required",
     # Permanently unavailable (paid/NFL-only) — documented in report
     "air_yards":          "NFL tracking data — unavailable free",
     "snap_share":         "NFL data — unavailable free",
     "adot":               "NFL charting data — unavailable free",
-    "yprr":               "PFF+ college routes required",
     "juke_rate":          "PlayerProfiler paid metric",
     "yards_created":      "PlayerProfiler paid metric",
     "target_separation":  "NFL Next Gen Stats (restricted)",
@@ -328,6 +351,13 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     # College fantasy PPG interaction
     if "college_fantasy_ppg" in df.columns:
         df["college_fpg_x_capital"] = df["college_fantasy_ppg"] * df["draft_capital_score"]
+    # Agility composite: average of 3-cone + shuttle (seconds; lower = more agile)
+    # Stored as raw average — lower = better, so direction is negative vs. fantasy output
+    if "three_cone" in df.columns and "shuttle" in df.columns:
+        df["agility_score"] = (df["three_cone"] + df["shuttle"]) / 2
+    # PFF interaction stubs — zero-coverage until PFF data ingested
+    if "best_yprr" in df.columns:
+        df["yprr_x_capital"] = df["best_yprr"] * df["draft_capital_score"]
     return df
 
 

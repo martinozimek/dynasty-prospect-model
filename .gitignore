@@ -8,9 +8,15 @@
 data/*
 !data/.gitkeep
 
-# Fitted model artifacts (regenerate from scripts)
+# Fitted model artifacts (regenerate via scripts/fit_model.py --all)
 model/*
 !model/.gitkeep
+models/*
+!models/.gitkeep
+
+# Generated report PDFs and scored output (regenerate via scripts)
+output/reports/*.pdf
+output/scores/*.csv
 
 # Jupyter checkpoints
 .ipynb_checkpoints/
