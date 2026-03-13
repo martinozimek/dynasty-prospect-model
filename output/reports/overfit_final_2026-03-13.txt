@@ -1,0 +1,186 @@
+INFO   WR: 224 rows (from 224), draft_year 2014-2022
+INFO   RB: 147 rows (from 147), draft_year 2014-2022
+INFO   TE: 97 rows (from 97), draft_year 2014-2022
+INFO   WR: 224 rows (from 224), draft_year 2014-2022
+INFO   RB: 147 rows (from 147), draft_year 2014-2022
+INFO   TE: 97 rows (from 97), draft_year 2014-2022
+INFO   WR: 224 rows (from 224), draft_year 2014-2022
+INFO   RB: 147 rows (from 147), draft_year 2014-2022
+INFO   TE: 97 rows (from 97), draft_year 2014-2022
+INFO   WR: 224 rows (from 224), draft_year 2014-2022
+INFO   RB: 147 rows (from 147), draft_year 2014-2022
+INFO   TE: 97 rows (from 97), draft_year 2014-2022
+INFO   WR: 224 rows (from 224), draft_year 2014-2022
+INFO   RB: 147 rows (from 147), draft_year 2014-2022
+INFO   TE: 97 rows (from 97), draft_year 2014-2022
+======================================================================
+SECTION 1: Train vs. Out-of-Sample R² Gap
+======================================================================
+Position     N  Feats   Train R²   LOYO R²      Gap    Gap %
+----------------------------------------------------------------------
+WR       224      8      0.398     0.356    0.041    10.4%
+RB       147      8      0.473     0.413    0.060    12.6%
+TE        97      7      0.478     0.403    0.074    15.6% * moderate
+
+Position  Ridge LOYO   LGBM LOYO   LGBM gap
+--------------------------------------------------
+WR           0.356       0.247      0.109 * large
+RB           0.413       0.362      0.051
+TE           0.403       0.316      0.087
+
+======================================================================
+SECTION 2: Per-Year R² Variance (Temporal Stability)
+======================================================================
+
+WR (aggregate LOYO R²=0.356):
+  Per-year R²: min=0.080  max=0.552  std=0.158  range=0.472
+  2014: n=24  R²= 0.481  #########
+  2015: n=23  R²= 0.135  ##
+  2016: n=23  R²= 0.149  ##
+  2017: n=22  R²= 0.414  ########
+  2018: n=29  R²= 0.552  ###########
+  2019: n=22  R²= 0.080  #
+  2020: n=33  R²= 0.417  ########
+  2021: n=25  R²= 0.362  #######
+  2022: n=23  R²= 0.246  ####
+
+RB (aggregate LOYO R²=0.413):
+  Per-year R²: min=0.049  max=0.625  std=0.152  range=0.576
+  2014: n=11  R²= 0.049  
+  2015: n=13  R²= 0.467  #########
+  2016: n=14  R²= 0.439  ########
+  2017: n=19  R²= 0.280  #####
+  2018: n=17  R²= 0.386  #######
+  2019: n=20  R²= 0.494  #########
+  2020: n=17  R²= 0.426  ########
+  2021: n=18  R²= 0.625  ############
+  2022: n=18  R²= 0.328  ######
+
+TE (aggregate LOYO R²=0.403):
+  Per-year R²: min=-0.257  max=0.697  std=0.290  range=0.954
+  *** NEGATIVE R² years (worse than mean baseline): [(2014, -0.257, 7), (2020, -0.157, 11)]
+  *** Small holdout sets (<10): [(2014, 7), (2016, 6)]
+  2014: n= 7  R²=-0.257  xxxxx
+  2015: n=12  R²= 0.269  #####
+  2016: n= 6  R²= 0.697  #############
+  2017: n=10  R²= 0.393  #######
+  2018: n=11  R²= 0.214  ####
+  2019: n=14  R²= 0.463  #########
+  2020: n=11  R²=-0.157  xxx
+  2021: n=10  R²= 0.377  #######
+  2022: n=16  R²= 0.492  #########
+
+======================================================================
+SECTION 3: Feature-to-Sample Ratio
+======================================================================
+Position     N  Feats   N/feat   Candidate feats   Cand/N
+------------------------------------------------------------
+WR       224      8     28.0                45     0.20
+RB       147      8     18.4                35     0.24
+TE        97      7     13.9                47     0.48 * moderate (<15x)
+
+  Note: 'Candidate feats / N' measures the candidate selection search space.
+  Lasso explores ~45 candidates for WR against 286 rows — even if Lasso
+  itself is regularized, the search process introduces selection bias.
+
+======================================================================
+SECTION 4: Multicollinearity Among Selected Features
+======================================================================
+
+WR selected features — high correlation pairs (|r| > 0.70):
+  log_draft_capital × draft_tier: r=0.909
+  log_draft_capital × breakout_score_x_capital: r=0.874
+  draft_tier × breakout_score_x_capital: r=0.845
+  best_man_yprr × best_man_zone_delta: r=0.791
+
+RB selected features — high correlation pairs (|r| > 0.70):
+  log_draft_capital × capital_x_age: r=0.876
+  log_draft_capital × total_yards_rate_x_capital: r=0.843
+  capital_x_age × total_yards_rate_x_capital: r=0.847
+
+TE selected features — high correlation pairs (|r| > 0.70):
+  overall_pick × breakout_score_x_capital: r=-0.784
+  overall_pick × consensus_rank: r=0.746
+  overall_pick × slot_rate_x_capital: r=-0.711
+  breakout_score_x_capital × consensus_rank: r=-0.739
+
+======================================================================
+SECTION 5: PFF Missing-Data Bias (Implicit Subsetting)
+======================================================================
+
+WR (N=224):
+  best_slot_yprr: 183/224 (82%) non-null
+    B2S mean — with: 6.22  without: 7.94  diff: -1.72
+    Draft capital — with: 20.1  without: 23.0  diff: -2.9
+  best_man_yprr: 99/224 (44%) non-null
+    B2S mean — with: 6.39  without: 6.64  diff: -0.26
+    Draft capital — with: 22.0  without: 19.6  diff: +2.4
+  best_man_zone_delta: 99/224 (44%) non-null
+    B2S mean — with: 6.39  without: 6.64  diff: -0.26
+    Draft capital — with: 22.0  without: 19.6  diff: +2.4
+
+RB (N=147):
+  best_zone_yprr: 63/147 (43%) non-null
+    B2S mean — with: 7.30  without: 8.14  diff: -0.84
+    Draft capital — with: 14.1  without: 15.7  diff: -1.6
+
+TE (N=97):
+  best_slot_target_rate: 83/97 (86%) non-null
+    B2S mean — with: 5.17  without: 5.92  diff: -0.75
+    Draft capital — with: 14.9  without: 19.1  diff: -4.2
+
+======================================================================
+SECTION 6: Lasso Selection Bias Estimate
+======================================================================
+  Methodology: Compare LOYO R² using currently selected features (selected
+  on full dataset) vs. nested LOYO where feature selection is re-run inside
+  each fold. The gap quantifies selection leakage into CV.
+
+  WR: Fixed-selection LOYO R²=0.351  Nested LOYO R²=0.350  Selection bias=+0.002
+  RB: Fixed-selection LOYO R²=0.416  Nested LOYO R²=0.415  Selection bias=+0.001
+  TE: Fixed-selection LOYO R²=0.399  Nested LOYO R²=0.399  Selection bias=+0.001
+
+======================================================================
+SECTION 7: ZAP Reference Distribution (In-Sample Bias)
+======================================================================
+  ZAP uses in-sample Ridge training predictions as the percentile reference.
+  Ridge training predictions are optimistically biased vs. true holdout preds.
+
+  WR:
+    Training pred dist:  mean=6.53  std=3.11  max=14.79  p90=10.88
+    Actual B2S dist:     mean=6.53  std=5.45  max=23.02  p90=14.58
+    In-sample mean overestimation: -0.00
+  RB:
+    Training pred dist:  mean=7.78  std=3.74  max=19.93  p90=13.06
+    Actual B2S dist:     mean=7.78  std=6.15  max=26.77  p90=15.87
+    In-sample mean overestimation: -0.00
+  TE:
+    Training pred dist:  mean=5.28  std=2.58  max=12.91  p90=9.41
+    Actual B2S dist:     mean=5.28  std=4.17  max=16.17  p90=10.59
+    In-sample mean overestimation: +0.00
+
+======================================================================
+SECTION 8: Draft Capital Dominance
+======================================================================
+
+WR: 8 selected features
+  Capital-derived: ['log_draft_capital', 'draft_tier', 'breakout_score_x_capital']
+  Non-capital:     ['best_age', 'early_declare', 'best_routes_per_game', 'best_man_yprr', 'best_man_zone_delta']
+  Capital-only LOYO R²: 0.318  |  Full model LOYO R²: 0.351
+  Non-capital features add: +0.033 R² points
+
+RB: 8 selected features
+  Capital-derived: ['log_draft_capital', 'capital_x_age', 'total_yards_rate_x_capital', 'position_rank']
+  Non-capital:     ['best_usage_pass', 'college_fantasy_ppg', 'best_rush_ypc', 'best_zone_yprr']
+  Capital-only LOYO R²: 0.403  |  Full model LOYO R²: 0.416
+  Non-capital features add: +0.013 R² points
+
+TE: 7 selected features
+  Capital-derived: ['overall_pick', 'breakout_score_x_capital', 'consensus_rank', 'slot_rate_x_capital']
+  Non-capital:     ['weight_lbs', 'forty_time', 'broad_jump']
+  Capital-only LOYO R²: 0.400  |  Full model LOYO R²: 0.399
+  Non-capital features add: -0.000 R² points
+
+======================================================================
+END OF DIAGNOSTICS
+======================================================================

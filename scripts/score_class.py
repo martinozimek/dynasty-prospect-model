@@ -1,14 +1,21 @@
 """
 Apply fitted dynasty prospect models to an upcoming draft class.
 
-Produces a ranked prospect sheet with projected B2S scores and percentile ranks
-relative to the historical training distribution.
+Produces a ranked prospect sheet with:
+  - Projected B2S score (PPR PPG, natural model units)
+  - ZAP Score (0-100 scale, bounded at 100 as theoretical ceiling)
+    ZAP = percentile of prospect's projected B2S vs training set predictions.
+    Interpretation: ZAP 70 → scores better than 70% of all 2011-2022 training players.
+    100 is the theoretical ceiling; real prospects with elite profiles score in the 70-90s.
 
-Pre-draft limitations:
-  - draft_capital_score, overall_pick, draft_round: unknown → imputed to training median
-  - All capital interaction terms (capital_x_age etc.) also set to NaN → imputed
-  - Model accuracy is lower pre-draft; projections improve once actual draft capital is known
-  - Re-run after the draft with --post-draft to incorporate actual pick data
+Pre-draft capital projection:
+  When --post-draft is NOT set, draft capital is projected from big board consensus rank:
+    - consensus_rank used directly as the projected overall pick number
+    - Converted to draft_capital_score via the same exponential decay formula as the DB
+    - All capital interaction terms (capital_x_age etc.) computed from projected capital
+    - Players not on the board default to pick ~220 (late-round/UDFA floor)
+  This dramatically improves pre-draft accuracy vs. imputing unknown capital to median.
+  Re-run with --post-draft after the draft to use actual pick data.
 
 Requires:
   - scripts/fit_model.py --all must have been run first (produces models/ artifacts)
@@ -28,6 +35,8 @@ Usage:
 import argparse
 import json
 import logging
+import math
+import re
 import sys
 import warnings
 from collections import defaultdict
@@ -36,6 +45,7 @@ from pathlib import Path
 import joblib
 import numpy as np
 import pandas as pd
+from scipy.stats import percentileofscore
 
 _ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(_ROOT))
@@ -55,10 +65,29 @@ log = logging.getLogger(__name__)
 
 _POSITIONS = ("WR", "RB", "TE")
 _BREAKOUT_THRESHOLD = {"WR": 0.20, "TE": 0.20, "RB": 0.10}
+_POWER4_CONFS = frozenset({"SEC", "Big Ten", "ACC", "Big 12"})
+
+# Floor pick for unranked prospects (no big board entry).
+# Late 6th / early 7th round / UDFA fringe → draft_capital ≈ 0.6
+_UNRANKED_FLOOR_PICK = 220
+
+
+def _pick_to_draft_capital(overall_pick: int) -> float:
+    """
+    Same formula as cfb-prospect-db/ffdb/collectors/pfr_collector.py.
+    draft_capital_score = 100 * exp(-0.023 * (pick - 1))
+    Pick 1 → 100.0 | Pick 32 → 49.0 | Pick 100 → 10.3 | Pick 220 → 0.6
+    """
+    return round(100.0 * math.exp(-0.023 * (max(1, overall_pick) - 1)), 1)
+
+
+def _projected_round(overall_pick: int) -> int:
+    """Map projected pick to draft round (32 picks per round)."""
+    return min(7, (overall_pick - 1) // 32 + 1)
 
 
 # ---------------------------------------------------------------------------
-# Data loading — mirrors build_training_set.py but for declared prospects
+# Data loading - mirrors build_training_set.py but for declared prospects
 # ---------------------------------------------------------------------------
 
 def _load_cfb_prospects(cfb_db_path: str, draft_year: int) -> dict:
@@ -69,6 +98,8 @@ def _load_cfb_prospects(cfb_db_path: str, draft_year: int) -> dict:
     cfb_root = Path(cfb_db_path).parent
     if str(cfb_root) not in sys.path:
         sys.path.insert(0, str(cfb_root))
+
+    from sqlalchemy import func as sa_func
 
     from ffdb.database import (
         CFBPlayerSeason,
@@ -116,7 +147,6 @@ def _load_cfb_prospects(cfb_db_path: str, draft_year: int) -> dict:
             result["draft_picks"] = {}
             result["combine"] = {}
             result["recruiting"] = {}
-            result["pff"] = {}
             return result
 
         # College seasons
@@ -129,6 +159,7 @@ def _load_cfb_prospects(cfb_db_path: str, draft_year: int) -> dict:
             seasons[row.player_id].append({
                 "season_year": row.season_year,
                 "team": row.team,
+                "conference": row.conference,
                 "games_played": row.games_played,
                 "rec_yards": row.rec_yards,
                 "targets": row.targets,
@@ -148,18 +179,45 @@ def _load_cfb_prospects(cfb_db_path: str, draft_year: int) -> dict:
                 "usage_pass": row.usage_pass,
                 "usage_rush": row.usage_rush,
             })
-        result["seasons"] = dict(seasons)
-
         # Team seasons (denominators)
-        result["team_seasons"] = {
+        team_seasons_raw = {
             (row.team, row.season_year): {
                 "sp_plus_rating": row.sp_plus_rating,
                 "pass_attempts": row.pass_attempts,
             }
             for row in s.query(CFBTeamSeason).all()
         }
+        result["team_seasons"] = team_seasons_raw
 
-        # Draft picks — for post-draft scoring only; None pre-draft
+        # Team total receiving TDs per (team, year) - from ALL players, not just declared.
+        # Required to compute each declared prospect's TD share in their best season.
+        team_rec_tds_rows = (
+            s.query(
+                CFBPlayerSeason.team,
+                CFBPlayerSeason.season_year,
+                sa_func.sum(CFBPlayerSeason.rec_tds).label("total_rec_tds"),
+            )
+            .group_by(CFBPlayerSeason.team, CFBPlayerSeason.season_year)
+            .all()
+        )
+        team_rec_tds = {
+            (row.team, row.season_year): (row.total_rec_tds or 0)
+            for row in team_rec_tds_rows
+        }
+
+        # Enrich player season dicts with team context so helpers
+        # (_breakout_score, _total_yards_rate) can access SP+ without extra lookup args.
+        for slist in seasons.values():
+            for sn in slist:
+                key = (sn.get("team"), sn.get("season_year"))
+                ts = team_seasons_raw.get(key, {})
+                sn["sp_plus_rating"] = ts.get("sp_plus_rating")
+                sn["team_pass_att"]  = ts.get("pass_attempts")
+                total_tds = team_rec_tds.get(key, 0)
+                player_tds = sn.get("rec_tds") or 0
+                sn["rec_td_pct"] = player_tds / total_tds if total_tds > 0 else None
+
+        # Draft picks - for post-draft scoring only; None pre-draft
         result["draft_picks"] = {
             row.player_id: {
                 "draft_year": row.draft_year,
@@ -174,7 +232,7 @@ def _load_cfb_prospects(cfb_db_path: str, draft_year: int) -> dict:
             )
         }
 
-        # Combine — may be available if combine has already run
+        # Combine - may be available if combine has already run
         result["combine"] = {
             row.player_id: {
                 "combine_weight_lbs": row.weight_lbs,
@@ -211,24 +269,123 @@ def _load_cfb_prospects(cfb_db_path: str, draft_year: int) -> dict:
                 }
         result["recruiting"] = recruiting
 
-        # PFF data
-        pff: dict[int, dict] = {}
+        # PFF data - all seasons keyed by (player_id, season_year).
+        # Merged into season dicts below as source-of-truth for counting stats.
+        pff_by_season: dict[tuple, dict] = {}
         for row in (
             s.query(PFFPlayerSeason)
             .filter(PFFPlayerSeason.player_id.in_(list(declared_ids)))
-            .order_by(PFFPlayerSeason.yprr.desc().nullslast())
             .all()
         ):
-            if row.player_id not in pff:
-                pff[row.player_id] = {
-                    "best_yprr": row.yprr,
-                    "best_routes_per_game": row.routes_per_game,
-                    "best_receiving_grade": row.receiving_grade,
-                    "best_contested_catch_rate": row.contested_catch_rate,
-                    "best_drop_rate": row.drop_rate,
-                    "best_target_sep": row.target_separation,
-                }
-        result["pff"] = pff
+            # Parse PFF split JSON columns into summary scalars.
+            # All JSON values are stored as strings - cast to float before arithmetic.
+            def _f(v):
+                """Convert JSON string value to float, or None if absent/blank."""
+                try:
+                    return float(v) if v is not None and v != "" else None
+                except (ValueError, TypeError):
+                    return None
+
+            _splits: dict = {}
+            _base_tgt = None
+            if row.depth_data:
+                try:
+                    _d = json.loads(row.depth_data)
+                    _base_tgt = _f(_d.get("base_targets"))
+                    _splits["deep_yprr"] = _f(_d.get("deep_yprr"))
+                    if _base_tgt:
+                        _deep_tgt = _f(_d.get("deep_targets"))
+                        _splits["deep_target_rate"] = (
+                            round(_deep_tgt / _base_tgt, 4) if _deep_tgt is not None else None
+                        )
+                        _blos_tgt = _f(_d.get("behind_los_targets"))
+                        _splits["behind_los_rate"] = (
+                            round(_blos_tgt / _base_tgt, 4) if _blos_tgt is not None else None
+                        )
+                except Exception:
+                    pass
+            if row.concept_data:
+                try:
+                    _c = json.loads(row.concept_data)
+                    _bt = _base_tgt or _f(_c.get("base_targets"))
+                    _splits["slot_yprr"] = _f(_c.get("slot_yprr"))
+                    if _bt:
+                        _slot_tgt = _f(_c.get("slot_targets"))
+                        _splits["slot_target_rate"] = (
+                            round(_slot_tgt / _bt, 4) if _slot_tgt is not None else None
+                        )
+                        _scr_tgt = _f(_c.get("screen_targets"))
+                        _splits["screen_rate"] = (
+                            round(_scr_tgt / _bt, 4) if _scr_tgt is not None else None
+                        )
+                except Exception:
+                    pass
+            if row.scheme_data:
+                try:
+                    _sc = json.loads(row.scheme_data)
+                    _man = _f(_sc.get("man_yprr"))
+                    _zone = _f(_sc.get("zone_yprr"))
+                    _splits["man_yprr"] = _man
+                    _splits["zone_yprr"] = _zone
+                    if _man is not None and _zone is not None:
+                        _splits["man_zone_delta"] = round(_man - _zone, 4)
+                except Exception:
+                    pass
+            pff_by_season[(row.player_id, row.season_year)] = {
+                "targets":      row.targets,
+                "receptions":   row.receptions,
+                "rec_yards":    row.rec_yards,
+                "rec_tds":      row.rec_tds,
+                "games_played": row.games_played,
+                "rush_yards":   row.rush_yards,
+                "rush_attempts": row.rush_attempts,
+                "rush_tds":     row.rush_tds,
+                "yprr":                 row.yprr,
+                "routes_run":           row.routes_run,
+                "routes_per_game":      row.routes_per_game,
+                "receiving_grade":      row.receiving_grade,
+                "catch_rate":           row.catch_rate,
+                "td_rate":              row.td_rate,
+                "yards_per_reception":  row.yards_per_reception,
+                "drop_rate":            row.drop_rate,
+                "contested_catch_rate": row.contested_catch_rate,
+                "target_separation":    row.target_separation,
+                "offense_grade":        row.offense_grade,
+                "rush_grade":           row.rush_grade,
+                # PFF split scalars (depth / concept / scheme JSON columns)
+                **_splits,
+            }
+
+    # Merge PFF into season dicts (outside session - data already extracted)
+    pff_merged = 0
+    for pid, slist in seasons.items():
+        for sn in slist:
+            pff_sn = pff_by_season.get((pid, sn.get("season_year")))
+            if pff_sn is None:
+                continue
+            for field in ("targets", "receptions", "rec_yards", "rec_tds", "games_played",
+                          "rush_yards", "rush_attempts", "rush_tds"):
+                pff_val = pff_sn.get(field)
+                if pff_val is not None:
+                    sn[field] = pff_val
+            for field in ("yprr", "routes_run", "routes_per_game", "receiving_grade",
+                          "catch_rate", "td_rate", "yards_per_reception", "drop_rate",
+                          "contested_catch_rate", "target_separation", "offense_grade",
+                          "rush_grade",
+                          # PFF split scalars (depth / concept / scheme)
+                          "deep_yprr", "deep_target_rate", "behind_los_rate",
+                          "slot_yprr", "slot_target_rate", "screen_rate",
+                          "man_yprr", "zone_yprr", "man_zone_delta"):
+                sn[field] = pff_sn.get(field)
+            pff_rec_yards = pff_sn.get("rec_yards")
+            team_pass_att = sn.get("team_pass_att")
+            if pff_rec_yards is not None and team_pass_att and team_pass_att > 0:
+                sn["rec_yards_per_team_pass_att"] = round(pff_rec_yards / team_pass_att, 6)
+            pff_merged += 1
+
+    result["seasons"] = dict(seasons)
+    log.info("PFF merged into %d/%d prospect season rows",
+             pff_merged, sum(len(v) for v in seasons.values()))
 
     log.info(
         "Loaded %d declared %d prospects (%s) with %d season groups, "
@@ -262,7 +419,7 @@ def _load_bigboard(nfl_db_path: str, draft_year: int) -> dict[str, dict]:
                 .filter(NFLBigBoard.draft_year == draft_year)
                 .all()
             ):
-                key = row.player_name.lower().strip()
+                key = _normalize_name(row.player_name)
                 board[key] = {
                     "consensus_rank": row.consensus_rank,
                     "position_rank": row.position_rank,
@@ -271,7 +428,7 @@ def _load_bigboard(nfl_db_path: str, draft_year: int) -> dict[str, dict]:
         return board
 
     except Exception as e:
-        log.warning("Could not load big board: %s — consensus_rank will be None", e)
+        log.warning("Could not load big board: %s - consensus_rank will be None", e)
         return {}
 
 
@@ -299,6 +456,18 @@ def _compute_teammate_score(
     return round(score, 2)
 
 
+_SUFFIX_RE = re.compile(r"\s+(jr\.?|sr\.?|ii|iii|iv|v)\s*$", re.IGNORECASE)
+
+
+def _normalize_name(name: str) -> str:
+    """Lowercase + strip generational suffixes for board-to-DB name matching.
+
+    Handles mismatches like 'Chris Brazzell' (board) vs 'Chris Brazzell II' (DB),
+    'Emmanuel Henderson' vs 'Emmanuel Henderson Jr.', etc.
+    """
+    return _SUFFIX_RE.sub("", name.lower().strip())
+
+
 def _best_season(seasons: list[dict], min_games: int = 6) -> dict | None:
     qualifying = [s for s in seasons if (s.get("games_played") or 0) >= min_games]
     if not qualifying:
@@ -306,7 +475,97 @@ def _best_season(seasons: list[dict], min_games: int = 6) -> dict | None:
     return max(qualifying, key=lambda s: s.get("rec_yards_per_team_pass_att") or 0.0)
 
 
-def _breakout_age(seasons: list[dict], position: str, min_games: int = 6) -> float | None:
+def _resolve_age(s: dict, recruit_year: int | None) -> float | None:
+    """Return age_at_season_start, falling back to recruit_year estimate when DOB is absent.
+
+    CFBD often lacks DOB for recent prospects. Estimate: recruit class of year Y implies
+    the player was ~18.5 at the start of their freshman season (season_year == Y).
+    age_at_season_start ≈ 18.5 + (season_year − recruit_year)
+    """
+    age = s.get("age_at_season_start")
+    if age is not None:
+        return age
+    if recruit_year is not None:
+        season_year = s.get("season_year")
+        if season_year is not None:
+            return 18.5 + (season_year - recruit_year)
+    return None
+
+
+def _breakout_score(seasons: list[dict], min_games: int = 6,
+                    recruit_year: int | None = None) -> float | None:
+    """
+    JJ Zachariason's Breakout Score - primary WR production input (Ep 1083, Feb 2026).
+
+    Formula (transcript-confirmed):
+      base  = rec_yards_per_team_pass_att
+      × SOS mult  = max(0.70, min(1.30, 1 + (sp_plus − 5) / 100))
+      × age mult  = max(0, 26 − age_at_season_start)
+
+    Taken as MAXIMUM across qualifying seasons (>= min_games).
+    Season dicts must be pre-enriched with sp_plus_rating and team_pass_att.
+    min_team_pass_att guard skips option-offense seasons (Navy ~100 vs FBS avg ~380).
+    When age_at_season_start is absent, falls back to recruit_year estimate.
+    """
+    best = None
+    for s in seasons:
+        if (s.get("games_played") or 0) < min_games:
+            continue
+        team_pass_att = s.get("team_pass_att") or 0
+        if team_pass_att < 200:
+            continue
+        rec_rate = s.get("rec_yards_per_team_pass_att") or 0.0
+        age = _resolve_age(s, recruit_year)
+        if age is None:
+            continue
+        sp_plus = s.get("sp_plus_rating")
+        sos_mult = (
+            max(0.70, min(1.30, 1.0 + (sp_plus - 5.0) / 100.0))
+            if sp_plus is not None else 1.0
+        )
+        score = rec_rate * sos_mult * max(0.0, 26.0 - age)
+        if best is None or score > best:
+            best = score
+    return round(best, 4) if best is not None else None
+
+
+def _total_yards_rate(seasons: list[dict], min_games: int = 6,
+                      recruit_year: int | None = None) -> float | None:
+    """
+    JJ's 'adjusted yards per team play' for RBs (Ep 1081, Feb 2026).
+
+    Formula:
+      base  = (rec_yards + rush_yards) / team_pass_attempts
+      × SOS mult  = max(0.70, min(1.30, 1 + (sp_plus − 5) / 100))
+      × age mult  = max(0, 26 − age_at_season_start)
+
+    Taken as MAXIMUM across qualifying seasons (>= min_games).
+    When age_at_season_start is absent, falls back to recruit_year estimate.
+    """
+    best = None
+    for s in seasons:
+        if (s.get("games_played") or 0) < min_games:
+            continue
+        team_pass_att = s.get("team_pass_att") or 0
+        if team_pass_att < 200:
+            continue
+        total_yards = (s.get("rec_yards") or 0) + (s.get("rush_yards") or 0)
+        age = _resolve_age(s, recruit_year)
+        if age is None:
+            continue
+        sp_plus = s.get("sp_plus_rating")
+        sos_mult = (
+            max(0.70, min(1.30, 1.0 + (sp_plus - 5.0) / 100.0))
+            if sp_plus is not None else 1.0
+        )
+        rate = (total_yards / team_pass_att) * sos_mult * max(0.0, 26.0 - age)
+        if best is None or rate > best:
+            best = rate
+    return round(best, 4) if best is not None else None
+
+
+def _breakout_age(seasons: list[dict], position: str, min_games: int = 6,
+                  recruit_year: int | None = None) -> float | None:
     threshold = _BREAKOUT_THRESHOLD.get(position, 0.20)
     qualifying = sorted(
         [s for s in seasons if (s.get("games_played") or 0) >= min_games],
@@ -315,7 +574,7 @@ def _breakout_age(seasons: list[dict], position: str, min_games: int = 6) -> flo
     for s in qualifying:
         dom = s.get("dominator_rating") or 0.0
         if dom >= threshold:
-            return s.get("age_at_season_start")
+            return _resolve_age(s, recruit_year)
     return None
 
 
@@ -348,10 +607,10 @@ def _build_prospect_row(
 
     combine = cfb["combine"].get(player_id, {})
     recruiting = cfb["recruiting"].get(player_id, {})
-    pff = cfb["pff"].get(player_id, {})
+    recruit_year: int | None = recruiting.get("recruit_year")
 
-    # Big board lookup by player name (case-insensitive)
-    name_key = player["full_name"].lower().strip()
+    # Big board lookup - suffix-normalized to handle Jr./II/III mismatches
+    name_key = _normalize_name(player["full_name"])
     board_data = board.get(name_key, {})
 
     # Career totals
@@ -368,7 +627,9 @@ def _build_prospect_row(
         career_rec_yards / career_targets if career_targets > 0 else None
     )
 
-    ba = _breakout_age(seasons_raw, position, min_games=min_games)
+    ba = _breakout_age(seasons_raw, position, min_games=min_games, recruit_year=recruit_year)
+    best_breakout_score = _breakout_score(seasons_raw, min_games=min_games, recruit_year=recruit_year)
+    best_total_yards_rate = _total_yards_rate(seasons_raw, min_games=min_games, recruit_year=recruit_year)
 
     best_targets_val = best.get("targets") or 0
     best_receptions_val = best.get("receptions") or 0
@@ -398,16 +659,24 @@ def _build_prospect_row(
 
     weight = combine.get("combine_weight_lbs") or player.get("weight_lbs")
 
-    # Draft capital — available post-draft or not yet (pre-draft → None)
+    # Draft capital
     draft_pick = cfb["draft_picks"].get(player_id, {})
     if post_draft and draft_pick:
+        # Post-draft: use actual pick data
         draft_capital_score = draft_pick.get("draft_capital_score")
-        draft_round = draft_pick.get("draft_round")
-        overall_pick = draft_pick.get("overall_pick")
+        draft_round         = draft_pick.get("draft_round")
+        overall_pick        = draft_pick.get("overall_pick")
+        is_projected        = False
     else:
-        draft_capital_score = None
-        draft_round = None
-        overall_pick = None
+        # Pre-draft: project from big board consensus rank.
+        # consensus_rank on nflmockdraftdatabase is the overall board position,
+        # which closely tracks actual draft slot for top prospects.
+        board_rank = board_data.get("consensus_rank")
+        proj_pick  = int(board_rank) if board_rank is not None else _UNRANKED_FLOOR_PICK
+        draft_capital_score = _pick_to_draft_capital(proj_pick)
+        draft_round         = _projected_round(proj_pick)
+        overall_pick        = proj_pick
+        is_projected        = True
 
     # Teammate score (uses training draft picks if available; empty pre-draft)
     team_picks = cfb_training["draft_picks"] if cfb_training else cfb["draft_picks"]
@@ -428,7 +697,7 @@ def _build_prospect_row(
         "best_rec_rate": best.get("rec_yards_per_team_pass_att"),
         "best_dominator": best.get("dominator_rating"),
         "best_reception_share": best.get("reception_share"),
-        "best_age": best.get("age_at_season_start"),
+        "best_age": _resolve_age(best, recruit_year),
         "best_games": best_games_val,
         "best_sp_plus": best_team_season.get("sp_plus_rating"),
         "best_ppa_pass": best.get("ppa_avg_pass"),
@@ -448,6 +717,8 @@ def _build_prospect_row(
         "best_yards_per_touch": best_yards_per_touch,
         "college_fantasy_ppg": college_fantasy_ppg,
         "breakout_age": ba,
+        "best_breakout_score": best_breakout_score,
+        "best_total_yards_rate": best_total_yards_rate,
         # Career
         "career_seasons": career_seasons,
         "career_rec_yards": career_rec_yards,
@@ -470,10 +741,11 @@ def _build_prospect_row(
         "three_cone": combine.get("three_cone"),
         "shuttle": combine.get("shuttle"),
         "bench_press": combine.get("bench_press"),
-        # Draft (None pre-draft)
+        # Draft capital (actual post-draft; projected from board rank pre-draft)
         "draft_capital_score": draft_capital_score,
         "draft_round": draft_round,
         "overall_pick": overall_pick,
+        "capital_is_projected": is_projected,
         # Recruiting
         "recruit_rating": recruiting.get("recruit_rating"),
         "recruit_stars": recruiting.get("recruit_stars"),
@@ -483,13 +755,27 @@ def _build_prospect_row(
         "position_rank": board_data.get("position_rank"),
         # Context
         "teammate_score": teammate_score,
-        # PFF stubs
-        "best_yprr": pff.get("best_yprr"),
-        "best_routes_per_game": pff.get("best_routes_per_game"),
-        "best_receiving_grade": pff.get("best_receiving_grade"),
-        "best_contested_catch_rate": pff.get("best_contested_catch_rate"),
-        "best_drop_rate": pff.get("best_drop_rate"),
-        "best_target_sep": pff.get("best_target_sep"),
+        # Conference tier (Power-4 = 1, all others = 0)
+        "power4_conf": int(best.get("conference") in _POWER4_CONFS) if best.get("conference") else None,
+        # TD share in best season (JJ's sub-20% ceiling flag for WRs)
+        "best_rec_td_pct": best.get("rec_td_pct"),
+        # PFF metrics - read from best season dict (PFF merged as source of truth)
+        "best_yprr": best.get("yprr"),
+        "best_routes_per_game": best.get("routes_per_game"),
+        "best_receiving_grade": best.get("receiving_grade"),
+        "best_contested_catch_rate": best.get("contested_catch_rate"),
+        "best_drop_rate": best.get("drop_rate"),
+        "best_target_sep": best.get("target_separation"),
+        # PFF split scalars - depth / concept / scheme zones
+        "best_deep_yprr": best.get("deep_yprr"),
+        "best_deep_target_rate": best.get("deep_target_rate"),
+        "best_behind_los_rate": best.get("behind_los_rate"),
+        "best_slot_yprr": best.get("slot_yprr"),
+        "best_slot_target_rate": best.get("slot_target_rate"),
+        "best_screen_rate": best.get("screen_rate"),
+        "best_man_yprr": best.get("man_yprr"),
+        "best_zone_yprr": best.get("zone_yprr"),
+        "best_man_zone_delta": best.get("man_zone_delta"),
     }
 
 
@@ -497,33 +783,35 @@ def _build_prospect_row(
 # Scoring
 # ---------------------------------------------------------------------------
 
-def _load_training_b2s(data_dir: Path, position: str) -> pd.Series:
-    """Load B2S scores from training CSV to compute percentile ranks."""
-    path = data_dir / f"training_{position}.csv"
-    if not path.exists():
-        return pd.Series(dtype=float)
-    df = pd.read_csv(path)
-    return df["b2s_score"].dropna()
-
-
 def score_position(
     position: str,
     prospects_df: pd.DataFrame,
     models_dir: Path,
-    data_dir: Path,
     model_type: str = "ridge",
     post_draft: bool = False,
 ) -> pd.DataFrame:
-    """Load fitted pipeline and score prospects for one position."""
+    """
+    Load fitted pipeline and score prospects for one position.
+
+    ZAP Score (0-100):
+      = percentileofscore(training_ridge_predictions, prospect_ridge_prediction)
+      The reference distribution is the Ridge model's in-sample predictions on
+      training players - stored in models/metadata.json under {pos}_train_preds.
+      This ensures 100 is a true ceiling: a prospect must match or exceed the
+      best training player's model projection to reach 100.
+    """
     model_path = models_dir / f"{position}_{model_type}.pkl"
     features_path = models_dir / f"{position}_features.json"
+    metadata_path = models_dir / "metadata.json"
 
     if not model_path.exists():
-        log.warning("Model not found: %s — run fit_model.py --all first", model_path)
+        log.warning("Model not found: %s - run fit_model.py --all first", model_path)
         return pd.DataFrame()
 
-    pipeline = joblib.load(model_path)
-    features = json.loads(features_path.read_text())
+    pipeline  = joblib.load(model_path)
+    features  = json.loads(features_path.read_text())
+    metadata  = json.loads(metadata_path.read_text()) if metadata_path.exists() else {}
+    train_preds_ref = np.array(metadata.get(position, {}).get("train_preds", []))
 
     df = prospects_df[prospects_df["position"] == position].copy()
     if df.empty:
@@ -531,50 +819,52 @@ def score_position(
         return pd.DataFrame()
 
     # Apply feature engineering (same as analyze.py + fit_model.py)
-    # Need draft_year column for engineer_features (combined_ath uses overall_pick)
     df["draft_year"] = df["declared_draft_year"]
 
     # Cast all non-identity columns to numeric (prospect rows may have Python None
     # which creates object-dtype Series, causing np.log / clip to fail)
     _id_cols = {"player_name", "position", "best_team", "model", "post_draft",
-                "declared_draft_year", "draft_year", "best_season_year"}
+                "declared_draft_year", "draft_year", "best_season_year",
+                "capital_is_projected"}
     for col in df.columns:
         if col not in _id_cols:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
     df_eng = engineer_features(df)
 
-    # Predict — use only features the model knows
-    available_features = [f for f in features if f in df_eng.columns]
-    missing_features = [f for f in features if f not in df_eng.columns]
-    if missing_features:
-        log.debug("  %s: features missing from prospect data (will be imputed): %s",
-                  position, missing_features)
-        for f in missing_features:
+    # Ensure all model features are present (fill missing with NaN → imputed)
+    for f in features:
+        if f not in df_eng.columns:
             df_eng[f] = np.nan
 
-    X = df_eng[features].values
+    X     = df_eng[features].values
     preds = np.clip(pipeline.predict(X), 0, None)
 
-    # Percentile rank vs training distribution
-    train_b2s = _load_training_b2s(data_dir, position)
-    if len(train_b2s) > 0:
-        percentiles = np.array([
-            float(np.mean(train_b2s <= p)) * 100 for p in preds
+    # ZAP Score - percentile vs Ridge training prediction distribution.
+    # Bounded [0, 100]: any prospect at or above the training max → ZAP = 100.
+    if len(train_preds_ref) > 0:
+        zap_scores = np.array([
+            min(100.0, float(percentileofscore(train_preds_ref, p, kind="weak")))
+            for p in preds
         ])
     else:
-        percentiles = np.full(len(preds), np.nan)
+        log.warning("  No training predictions in metadata - ZAP scores unavailable.")
+        zap_scores = np.full(len(preds), np.nan)
 
-    result = df[["player_name", "position", "best_team", "best_season_year",
-                 "best_dominator", "best_rec_rate", "college_fantasy_ppg",
-                 "breakout_age", "best_age", "weight_lbs", "speed_score",
-                 "consensus_rank", "position_rank",
-                 "draft_capital_score", "overall_pick"]].copy()
+    keep_cols = [c for c in [
+        "player_name", "position", "best_team", "best_season_year",
+        "best_dominator", "best_rec_rate", "college_fantasy_ppg",
+        "breakout_age", "best_age", "weight_lbs", "speed_score",
+        "consensus_rank", "position_rank",
+        "draft_capital_score", "overall_pick", "capital_is_projected",
+    ] if c in df.columns]
+
+    result = df[keep_cols].copy()
     result["projected_b2s"] = preds.round(2)
-    result["percentile"] = percentiles.round(1)
-    result["model"] = model_type
-    result["post_draft"] = post_draft
-    result = result.sort_values("projected_b2s", ascending=False).reset_index(drop=True)
+    result["zap_score"]     = zap_scores.round(1)
+    result["model"]         = model_type
+    result["post_draft"]    = post_draft
+    result = result.sort_values("zap_score", ascending=False).reset_index(drop=True)
     result.insert(0, "pos_rank", result.index + 1)
 
     log.info(
@@ -582,7 +872,7 @@ def score_position(
         position,
         len(result),
         ", ".join(
-            f"{r['player_name']} ({r['projected_b2s']:.1f})"
+            f"{r['player_name']} (ZAP={r['zap_score']:.0f}, B2S={r['projected_b2s']:.1f})"
             for _, r in result.head(3).iterrows()
         ),
     )
@@ -662,7 +952,7 @@ def main() -> None:
             prospect_rows.append(row)
 
     if not prospect_rows:
-        log.error("No prospect rows built — check declarations and season data.")
+        log.error("No prospect rows built - check declarations and season data.")
         return
 
     prospects_df = pd.DataFrame(prospect_rows)
@@ -672,19 +962,40 @@ def main() -> None:
     # Score each position
     all_scored = []
     for pos in positions:
+        # Step 0 / 7d: check TE LightGBM status from metadata.
+        # If lgbm_status != "active", fall back to Ridge with a warning.
+        effective_model = args.model
+        if pos == "TE" and args.model == "lgbm":
+            try:
+                _meta = json.loads((models_dir / "metadata.json").read_text())
+                _lgbm_status = _meta.get("TE", {}).get("lgbm_status", "disabled")
+            except Exception:
+                _lgbm_status = "disabled"
+            if _lgbm_status != "active":
+                print(
+                    f"WARNING: TE LightGBM is not active (status='{_lgbm_status}', "
+                    f"see overfitting remediation plan Step 0/7d). Scoring TE with Ridge."
+                )
+                effective_model = "ridge"
+            else:
+                _te_loyo = _meta.get("TE", {}).get("lgbm_loyo_r2", float("nan"))
+                print(
+                    f"NOTE: TE LightGBM active after Step 7d retune "
+                    f"(LOYO R2={_te_loyo:.3f}). Using lgbm as requested."
+                )
+
         scored = score_position(
             position=pos,
             prospects_df=prospects_df,
             models_dir=models_dir,
-            data_dir=data_dir,
-            model_type=args.model,
+            model_type=effective_model,
             post_draft=args.post_draft,
         )
         if not scored.empty:
             all_scored.append(scored)
 
     if not all_scored:
-        log.error("No prospects scored — check model files and declared player list.")
+        log.error("No prospects scored - check model files and declared player list.")
         return
 
     combined = pd.concat(all_scored, ignore_index=True)
@@ -693,27 +1004,71 @@ def main() -> None:
 
     # Print summary table
     print(f"\n{'='*85}")
-    print(f"  Dynasty Prospect Model — {args.year} Draft Class Scores ({args.model.upper()})")
+    print(f"  Dynasty Prospect Model - {args.year} Draft Class Scores ({args.model.upper()})")
     if not args.post_draft:
-        print("  NOTE: Pre-draft — draft capital features unknown, scores are estimates")
+        print("  NOTE: Pre-draft - draft capital projected from big board consensus rank")
     print(f"{'='*85}")
     for pos in positions:
         sub = combined[combined["position"] == pos]
         if sub.empty:
             continue
         print(f"\n  {pos} ({len(sub)} prospects)")
-        print(f"  {'Rank':<4} {'Player':<28} {'Proj B2S':>8} {'Pct%':>5} "
+        print(f"  {'Rank':<4} {'Player':<28} {'Proj B2S':>8} {'ZAP':>5} "
               f"{'Dom':>6} {'RecRate':>7} {'CfpPPG':>6} {'Board':>5}")
         print("  " + "-" * 80)
         for _, r in sub.head(20).iterrows():
             print(
                 f"  {r['pos_rank']:<4} {r['player_name']:<28} "
-                f"{r['projected_b2s']:>8.2f} {r['percentile']:>5.1f} "
+                f"{r['projected_b2s']:>8.2f} {r['zap_score']:>5.1f} "
                 f"{(r.get('best_dominator') or 0):>6.3f} "
                 f"{(r.get('best_rec_rate') or 0):>7.4f} "
                 f"{(r.get('college_fantasy_ppg') or 0):>6.1f} "
-                f"{int(r['consensus_rank']) if pd.notna(r.get('consensus_rank')) else '—':>5}"
+                f"{int(r['consensus_rank']) if pd.notna(r.get('consensus_rank')) else '-':>5}"
             )
+    # Step 6: Per-year R2 transparency table (model stability calibration)
+    metadata_path = _ROOT / "models" / "metadata.json"
+    if metadata_path.exists():
+        metadata = json.loads(metadata_path.read_text())
+        print(f"\n  Model stability (LOYO R2 by holdout year):")
+        for pos in positions:
+            pos_meta = metadata.get(pos, {})
+            year_results = pos_meta.get("ridge_loyo_years", [])
+            if not year_results:
+                continue
+            loyo_r2 = pos_meta.get("ridge_loyo_r2", float("nan"))
+            r2_vals = [y["r2"] for y in year_results if not (y["r2"] != y["r2"])]
+            r2_min  = min(r2_vals) if r2_vals else float("nan")
+            r2_max  = max(r2_vals) if r2_vals else float("nan")
+            r2_std  = float(np.std(r2_vals)) if r2_vals else float("nan")
+            ridge_alpha = pos_meta.get("ridge_alpha", None)
+            alpha_str   = f"  alpha={ridge_alpha:.1f}" if ridge_alpha is not None else ""
+            lgbm_status = pos_meta.get("lgbm_status", "")
+            lgbm_note   = f"  LGBM={lgbm_status}" if lgbm_status else ""
+            print(
+                f"  {pos} Ridge LOYO R2={loyo_r2:.3f} "
+                f"(range: {r2_min:.2f}-{r2_max:.2f}, std={r2_std:.3f})"
+                f"{alpha_str}{lgbm_note}"
+            )
+            row_parts = []
+            for y in year_results:
+                flag = " *" if y["r2"] < 0.20 else ""
+                row_parts.append(f"    {y['year']}: n={y['n_test']:>2}  R2={y['r2']:>6.3f}{flag}")
+            print("\n".join(row_parts))
+            low_conf = [y["year"] for y in year_results if y["r2"] < 0.20]
+            if low_conf:
+                print(f"    * Low-confidence years (R2<0.20): {low_conf} - treat rankings as approximate.")
+
+        # Also print rolling/kfold for TE
+        te_meta = metadata.get("TE", {})
+        rc = te_meta.get("rolling_cv", {})
+        kc = te_meta.get("kfold_cv", {})
+        if rc.get("r2") is not None and rc["r2"] == rc["r2"]:
+            print(
+                f"  TE Rolling-window R2={rc['r2']:.3f} "
+                f"(train<=2018 n={rc.get('n_train',0)}, test>=2019 n={rc.get('n_test',0)})"
+            )
+            print(f"  TE K-fold (k=5) R2={kc.get('r2', float('nan')):.3f}")
+
     print(f"\n{'='*85}\n")
 
 

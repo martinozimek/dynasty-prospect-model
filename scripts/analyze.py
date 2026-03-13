@@ -85,7 +85,7 @@ _NON_FEATURES = {
 _BASE_FEATURES = [
     # Core ZAP metrics
     "best_rec_rate", "best_dominator", "best_reception_share",
-    "best_age", "breakout_age",
+    "best_age", "best_breakout_score", "best_total_yards_rate",
     "best_games", "best_sp_plus",
     "best_ppa_pass", "best_ppa_overall", "best_ppa_rush",
     "best_usage", "best_usage_pass", "best_usage_rush",
@@ -113,9 +113,15 @@ _BASE_FEATURES = [
     "consensus_rank", "position_rank",
     # Team context
     "teammate_score",
+    # Conference tier
+    "power4_conf",
+    # TD share in best season
+    "best_rec_td_pct",
     # PFF stubs — zero coverage until PFF+ data ingested; retained for future use
     "best_yprr", "best_routes_per_game", "best_receiving_grade",
     "best_contested_catch_rate", "best_drop_rate", "best_target_sep",
+    # Draft tier features (ep 1086 — capital works in tiers)
+    "draft_tier", "is_top16_rb",
 ]
 
 _ERA_WINDOWS = [
@@ -126,7 +132,7 @@ _ERA_WINDOWS = [
 ]
 
 _JJ_FEATURES = [
-    "best_dominator", "best_age", "breakout_age", "draft_capital_score",
+    "best_dominator", "best_age", "best_breakout_score", "draft_capital_score",
     "speed_score", "career_rec_per_target", "best_rec_rate", "recruit_rating",
     "college_fantasy_ppg",
 ]
@@ -134,7 +140,7 @@ _JJ_FEATURES = [
 _JJ_CLAIMS = {
     "best_dominator":        ">20% = strong signal (rec_yds% + rec_td%)/2",
     "best_age":              "Younger at peak = better; WR especially",
-    "breakout_age":          "<20 at first 20%+ dom season = elite signal",
+    "best_breakout_score":   "rec_rate × max(0, 26−age); rewards young efficient receivers",
     "draft_capital_score":   "Strongest single predictor of NFL success",
     "speed_score":           "Most predictive for RBs; (wt*200)/40^4",
     "career_rec_per_target": "YPRR proxy; yards per target career",
@@ -149,7 +155,9 @@ _FEATURE_LABELS = {
     "best_dominator":             "Dominator Rating (rec_yd%+rec_td%)/2",
     "best_reception_share":       "Reception Share",
     "best_age":                   "Age at Best College Season",
-    "breakout_age":               "Breakout Age (first dom>=threshold)",
+    "breakout_age":               "Breakout Age (first dom>=threshold) [diagnostic]",
+    "best_breakout_score":        "Breakout Score (rec_rate × SOS × max(0,26−age)) WR",
+    "best_total_yards_rate":      "Total Yards Rate ((rec+rush)/team_pass_att × SOS × age) RB",
     "best_games":                 "Games Played (Best Season)",
     "best_sp_plus":               "Team SP+ Rating (SOS)",
     "best_ppa_pass":              "PPA Pass (EPA per pass play)",
@@ -208,6 +216,10 @@ _FEATURE_LABELS = {
     "position_rank":              "Position Group Board Rank",
     # Team context
     "teammate_score":             "Teammate Draft Capital",
+    # Conference tier
+    "power4_conf":                "Power-4 Conference (1=SEC/Big Ten/ACC/Big 12)",
+    # TD share
+    "best_rec_td_pct":            "Rec TD Share (player TDs / team TDs, best season)",
     # Derived
     "dominator_x_rate":          "Dominator x Rec Rate",
     "age_x_dominator":           "Age x Dominator",
@@ -225,9 +237,13 @@ _FEATURE_LABELS = {
     "ypr":                       "Career Yards Per Target (YPR)",
     "draft_premium":             "(100 - Big Board Rank) / 100",
     "career_yardage":            "Career Rec + Rush Yards",
-    "breakout_x_capital":        "Breakout Age Inverted x Draft Capital",
+    "breakout_x_capital":        "Breakout Age Inverted x Draft Capital [deprecated]",
     "college_fpg_x_capital":     "College Fantasy PPG x Draft Capital",
-    "dominator_x_breakout":      "Dominator x Breakout Youth",
+    "dominator_x_breakout":      "Dominator x Breakout Youth [deprecated]",
+    "breakout_score_x_capital":  "Breakout Score x Draft Capital",
+    "breakout_score_x_dominator": "Breakout Score x Dominator Rating",
+    "total_yards_rate_x_capital": "Total Yards Rate x Draft Capital (RB)",
+    "combined_ath_x_capital":    "Combined Ath x Draft Capital (TE)",
     "agility_score":             "Agility Composite (3-cone+shuttle)/2",
     # PFF stubs
     "best_yprr":                 "YPRR — Yards Per Route Run [PFF+]",
@@ -237,6 +253,9 @@ _FEATURE_LABELS = {
     "best_drop_rate":            "Drop Rate (lower=better) [PFF+]",
     "best_target_sep":           "Target Separation Yards [PFF+]",
     "yprr_x_capital":            "YPRR x Draft Capital [PFF+]",
+    # Draft tier features (ep 1086)
+    "draft_tier":                "Draft Tier Ordinal (4=top16, 3=17-50, 2=51-100, 1=day3)",
+    "is_top16_rb":               "Top-Half R1 RB Flag (pick<=16 & RB) — R²=0.526 per JJ",
 }
 
 _MISSING_CAUSES = {
@@ -259,7 +278,9 @@ _MISSING_CAUSES = {
     "best_usage":         "CFBD coverage sparse 2011-2013",
     "best_usage_pass":    "CFBD coverage sparse 2011-2013",
     "best_usage_rush":    "CFBD coverage sparse 2011-2013",
-    "breakout_age":       "None if player never crossed dominator threshold",
+    "breakout_age":       "None if player never crossed dominator threshold [diagnostic only]",
+    "best_breakout_score":    "None if all qualifying seasons have missing age or rec_rate",
+    "best_total_yards_rate":  "None if team_pass_att or age missing in all qualifying seasons",
     "best_rush_ypc":      "WR/TE: few rush attempts — mostly None",
     "agility_score":      "Derived from three_cone + shuttle; same coverage as those fields",
     "recruit_rank_national": "Same as recruit_rating — CFBD quota gap 2011-2017",
@@ -342,12 +363,15 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     df["career_yardage"] = df["career_rec_yards"] + df["career_rush_yards"]
     # Pre-draft market signal
     df["draft_premium"] = (100 - df["consensus_rank"].clip(upper=300)) / 100
-    # Breakout age interaction terms
-    # Invert breakout_age: younger breakout = higher value (21 - age); floor at 0
-    if "breakout_age" in df.columns:
-        breakout_youth = (21 - df["breakout_age"]).clip(lower=0)
-        df["breakout_x_capital"]    = breakout_youth * df["draft_capital_score"]
-        df["dominator_x_breakout"]  = df["best_dominator"] * breakout_youth
+    # Combined athleticism x capital (TE primary — athleticism necessary-but-not-sufficient)
+    df["combined_ath_x_capital"] = df["combined_ath"] * df["log_draft_capital"]
+    # Breakout score interaction terms (WR primary — JJ's confirmed formula)
+    if "best_breakout_score" in df.columns:
+        df["breakout_score_x_capital"]   = df["best_breakout_score"] * df["log_draft_capital"]
+        df["breakout_score_x_dominator"] = df["best_breakout_score"] * df["best_dominator"]
+    # Total yards rate interaction (RB primary — JJ's adjusted yards per team play)
+    if "best_total_yards_rate" in df.columns:
+        df["total_yards_rate_x_capital"] = df["best_total_yards_rate"] * df["log_draft_capital"]
     # College fantasy PPG interaction
     if "college_fantasy_ppg" in df.columns:
         df["college_fpg_x_capital"] = df["college_fantasy_ppg"] * df["draft_capital_score"]
@@ -355,9 +379,39 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     # Stored as raw average — lower = better, so direction is negative vs. fantasy output
     if "three_cone" in df.columns and "shuttle" in df.columns:
         df["agility_score"] = (df["three_cone"] + df["shuttle"]) / 2
-    # PFF interaction stubs — zero-coverage until PFF data ingested
+    # PFF interaction terms — active when PFF+ data is ingested
     if "best_yprr" in df.columns:
         df["yprr_x_capital"] = df["best_yprr"] * df["draft_capital_score"]
+    # PFF split interaction terms
+    if "best_deep_target_rate" in df.columns:
+        df["deep_target_x_capital"] = df["best_deep_target_rate"] * df["draft_capital_score"]
+    if "best_deep_yprr" in df.columns:
+        df["deep_yprr_x_capital"] = df["best_deep_yprr"] * df["draft_capital_score"]
+    if "best_man_zone_delta" in df.columns:
+        df["man_delta_x_capital"] = df["best_man_zone_delta"] * df["draft_capital_score"]
+    if "best_slot_target_rate" in df.columns:
+        df["slot_rate_x_capital"] = df["best_slot_target_rate"] * df["draft_capital_score"]
+    # Draft tier encoding (ordinal: 4=top16, 3=picks17-50, 2=picks51-100, 1=day3)
+    # JJ ep 1086: capital works in tiers, not as precise rankings — top-half R1 RBs R²=0.526
+    if "overall_pick" in df.columns:
+        def _pick_to_tier(pick):
+            if pd.isna(pick):
+                return np.nan
+            if pick <= 16:
+                return 4
+            if pick <= 50:
+                return 3
+            if pick <= 100:
+                return 2
+            return 1
+        df["draft_tier"] = df["overall_pick"].apply(_pick_to_tier)
+    # is_top16_rb: binary flag capturing steep-then-flat non-linearity for RBs
+    # Top-half first round RBs (picks 1-16) have LOYO R²=0.526 — near-blind follow
+    if "overall_pick" in df.columns:
+        pos_col = df["position"] if "position" in df.columns else pd.Series("", index=df.index)
+        df["is_top16_rb"] = (
+            (df["overall_pick"] <= 16) & (pos_col == "RB")
+        ).astype(float)
     return df
 
 
@@ -1637,7 +1691,7 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--position", choices=list(_POSITIONS), default=None,
                    help="Single position to analyze (default: all three)")
-    p.add_argument("--start-year", type=int, default=None,
+    p.add_argument("--start-year", type=int, default=2014,
                    help="First draft class year (default: 2011)")
     p.add_argument("--end-year", type=int, default=None,
                    help="Last draft class year (default: 2022)")

@@ -71,6 +71,7 @@ Dependencies:
 """
 
 import argparse
+import json
 import logging
 import sys
 from collections import defaultdict
@@ -90,6 +91,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 _POSITIONS = ("WR", "RB", "TE")
+
+# Power-4 conferences for conference tier feature
+_POWER4_CONFS = frozenset({"SEC", "Big Ten", "ACC", "Big 12"})
 
 
 # ---------------------------------------------------------------------------
@@ -137,6 +141,7 @@ def _load_cfb(cfb_db_path: str) -> dict:
             seasons[row.player_id].append({
                 "season_year": row.season_year,
                 "team": row.team,
+                "conference": row.conference,
                 "games_played": row.games_played,
                 "rec_yards": row.rec_yards,
                 "targets": row.targets,
@@ -156,16 +161,37 @@ def _load_cfb(cfb_db_path: str) -> dict:
                 "usage_pass": row.usage_pass,
                 "usage_rush": row.usage_rush,
             })
-        result["seasons"] = dict(seasons)
-
         # Team seasons — keyed by (team, year) for SP+ lookup
-        result["team_seasons"] = {
+        team_seasons_raw = {
             (row.team, row.season_year): {
                 "sp_plus_rating": row.sp_plus_rating,
                 "pass_attempts": row.pass_attempts,
             }
             for row in s.query(CFBTeamSeason).all()
         }
+        result["team_seasons"] = team_seasons_raw
+
+        # Compute team total receiving TDs per (team, year) for rec_td_pct feature.
+        # Two-pass: aggregate from all loaded player season rows.
+        team_rec_tds: dict[tuple, int] = defaultdict(int)
+        for slist in seasons.values():
+            for sn in slist:
+                t, y = sn.get("team"), sn.get("season_year")
+                if t and y:
+                    team_rec_tds[(t, y)] += sn.get("rec_tds") or 0
+
+        # Enrich each player season dict with team context so helpers
+        # (_breakout_score, _total_yards_rate) can access SP+ and pass_att
+        # without requiring a separate team_seasons lookup argument.
+        for slist in seasons.values():
+            for sn in slist:
+                key = (sn.get("team"), sn.get("season_year"))
+                ts = team_seasons_raw.get(key, {})
+                sn["sp_plus_rating"] = ts.get("sp_plus_rating")
+                sn["team_pass_att"]  = ts.get("pass_attempts")
+                total_tds = team_rec_tds.get(key, 0)
+                player_tds = sn.get("rec_tds") or 0
+                sn["rec_td_pct"] = player_tds / total_tds if total_tds > 0 else None
 
         # Draft picks
         result["draft_picks"] = {
@@ -208,28 +234,133 @@ def _load_cfb(cfb_db_path: str) -> dict:
                 }
         result["recruiting"] = recruiting
 
-        # PFF data — best qualifying season by yprr, grouped by player_id.
-        # Will be empty dicts until PFF+ data is ingested via scripts/populate_pff.py.
-        pff: dict[int, dict] = {}
-        for row in s.query(PFFPlayerSeason).order_by(PFFPlayerSeason.yprr.desc().nullslast()).all():
-            if row.player_id not in pff:
-                pff[row.player_id] = {
-                    "best_yprr": row.yprr,
-                    "best_routes_per_game": row.routes_per_game,
-                    "best_receiving_grade": row.receiving_grade,
-                    "best_contested_catch_rate": row.contested_catch_rate,
-                    "best_drop_rate": row.drop_rate,
-                    "best_target_sep": row.target_separation,
-                }
-        result["pff"] = pff
+        # PFF data — all seasons keyed by (player_id, season_year).
+        # Merged into season dicts below as source-of-truth for counting stats.
+        pff_by_season: dict[tuple, dict] = {}
+        pff_row_count = 0
+        for row in s.query(PFFPlayerSeason).all():
+            # Parse PFF split JSON columns into summary scalars.
+            # All JSON values are stored as strings — cast to float before arithmetic.
+            def _f(v):
+                """Convert JSON string value to float, or None if absent/blank."""
+                try:
+                    return float(v) if v is not None and v != "" else None
+                except (ValueError, TypeError):
+                    return None
+
+            _splits: dict = {}
+            _base_tgt = None
+            if row.depth_data:
+                try:
+                    _d = json.loads(row.depth_data)
+                    _base_tgt = _f(_d.get("base_targets"))
+                    _splits["deep_yprr"] = _f(_d.get("deep_yprr"))
+                    if _base_tgt:
+                        _deep_tgt = _f(_d.get("deep_targets"))
+                        _splits["deep_target_rate"] = (
+                            round(_deep_tgt / _base_tgt, 4) if _deep_tgt is not None else None
+                        )
+                        _blos_tgt = _f(_d.get("behind_los_targets"))
+                        _splits["behind_los_rate"] = (
+                            round(_blos_tgt / _base_tgt, 4) if _blos_tgt is not None else None
+                        )
+                except Exception:
+                    pass
+            if row.concept_data:
+                try:
+                    _c = json.loads(row.concept_data)
+                    _bt = _base_tgt or _f(_c.get("base_targets"))
+                    _splits["slot_yprr"] = _f(_c.get("slot_yprr"))
+                    if _bt:
+                        _slot_tgt = _f(_c.get("slot_targets"))
+                        _splits["slot_target_rate"] = (
+                            round(_slot_tgt / _bt, 4) if _slot_tgt is not None else None
+                        )
+                        _scr_tgt = _f(_c.get("screen_targets"))
+                        _splits["screen_rate"] = (
+                            round(_scr_tgt / _bt, 4) if _scr_tgt is not None else None
+                        )
+                except Exception:
+                    pass
+            if row.scheme_data:
+                try:
+                    _sc = json.loads(row.scheme_data)
+                    _man = _f(_sc.get("man_yprr"))
+                    _zone = _f(_sc.get("zone_yprr"))
+                    _splits["man_yprr"] = _man
+                    _splits["zone_yprr"] = _zone
+                    if _man is not None and _zone is not None:
+                        _splits["man_zone_delta"] = round(_man - _zone, 4)
+                except Exception:
+                    pass
+            pff_by_season[(row.player_id, row.season_year)] = {
+                # Counting overrides (replace CFBD values where non-null)
+                "targets":      row.targets,
+                "receptions":   row.receptions,
+                "rec_yards":    row.rec_yards,
+                "rec_tds":      row.rec_tds,
+                "games_played": row.games_played,
+                "rush_yards":   row.rush_yards,
+                "rush_attempts": row.rush_attempts,
+                "rush_tds":     row.rush_tds,
+                # PFF-specific efficiency metrics
+                "yprr":                 row.yprr,
+                "routes_run":           row.routes_run,
+                "routes_per_game":      row.routes_per_game,
+                "receiving_grade":      row.receiving_grade,
+                "catch_rate":           row.catch_rate,
+                "td_rate":              row.td_rate,
+                "yards_per_reception":  row.yards_per_reception,
+                "drop_rate":            row.drop_rate,
+                "contested_catch_rate": row.contested_catch_rate,
+                "target_separation":    row.target_separation,
+                "offense_grade":        row.offense_grade,
+                "rush_grade":           row.rush_grade,
+                # PFF split scalars (depth / concept / scheme JSON columns)
+                **_splits,
+            }
+            pff_row_count += 1
+
+    # Merge PFF into season dicts (outside the session — data already extracted)
+    pff_merged = 0
+    for pid, slist in seasons.items():
+        for sn in slist:
+            pff_sn = pff_by_season.get((pid, sn.get("season_year")))
+            if pff_sn is None:
+                continue
+            # Override counting stats with PFF where PFF is non-null
+            for field in ("targets", "receptions", "rec_yards", "rec_tds", "games_played",
+                          "rush_yards", "rush_attempts", "rush_tds"):
+                pff_val = pff_sn.get(field)
+                if pff_val is not None:
+                    sn[field] = pff_val
+            # Embed PFF efficiency metrics directly on season dict
+            for field in ("yprr", "routes_run", "routes_per_game", "receiving_grade",
+                          "catch_rate", "td_rate", "yards_per_reception", "drop_rate",
+                          "contested_catch_rate", "target_separation", "offense_grade",
+                          "rush_grade",
+                          # PFF split scalars (depth / concept / scheme)
+                          "deep_yprr", "deep_target_rate", "behind_los_rate",
+                          "slot_yprr", "slot_target_rate", "screen_rate",
+                          "man_yprr", "zone_yprr", "man_zone_delta"):
+                sn[field] = pff_sn.get(field)
+            # Recompute rec_yards_per_team_pass_att using PFF rec_yards
+            pff_rec_yards = pff_sn.get("rec_yards")
+            team_pass_att = sn.get("team_pass_att")
+            if pff_rec_yards is not None and team_pass_att and team_pass_att > 0:
+                sn["rec_yards_per_team_pass_att"] = round(pff_rec_yards / team_pass_att, 6)
+            pff_merged += 1
+
+    result["seasons"] = dict(seasons)
 
     logger.info(
-        "CFB loaded: %d players, %d season groups, %d draft picks, %d combine rows, %d PFF rows",
+        "CFB loaded: %d players, %d season groups, %d draft picks, %d combine rows; "
+        "PFF merged into %d/%d season rows",
         len(result["players"]),
         len(result["seasons"]),
         len(result["draft_picks"]),
         len(result["combine"]),
-        len(result["pff"]),
+        pff_merged, sum(len(v) for v in seasons.values()),
     )
     return result
 
@@ -340,6 +471,83 @@ def _breakout_age(
     return None
 
 
+def _breakout_score(seasons: list[dict], min_games: int = 6) -> float | None:
+    """
+    JJ Zachariason's Breakout Score — primary WR production input (Ep 1083, Feb 2026).
+
+    Formula (transcript-confirmed):
+      base  = rec_yards_per_team_pass_att
+      × SOS mult  = max(0.70, min(1.30, 1 + (sp_plus − 5) / 100))
+                    [SP+ ~5 = average FBS → mult=1.0; elite ~30 → 1.25; weak ~−15 → 0.80]
+      × age mult  = max(0, 26 − age_at_season_start)
+                    [younger player = larger multiplier]
+
+    Taken as MAXIMUM across all qualifying seasons (≥ min_games).
+    WR-focused from 2026; not used as a model input for RBs.
+    Season dicts must be pre-enriched with sp_plus_rating and team_pass_att
+    (done in _load_cfb() / _load_cfb_prospects()).
+    min_team_pass_att guards against option-offense teams (Navy etc.) where a tiny
+    denominator inflates rec_rate to unrealistic levels.
+    """
+    best = None
+    for s in seasons:
+        if (s.get("games_played") or 0) < min_games:
+            continue
+        team_pass_att = s.get("team_pass_att") or 0
+        if team_pass_att < 200:   # skip option-offense seasons (Navy ~100, FBS avg ~380)
+            continue
+        rec_rate = s.get("rec_yards_per_team_pass_att") or 0.0
+        age = s.get("age_at_season_start")
+        if age is None:
+            continue
+        sp_plus = s.get("sp_plus_rating")
+        sos_mult = (
+            max(0.70, min(1.30, 1.0 + (sp_plus - 5.0) / 100.0))
+            if sp_plus is not None else 1.0
+        )
+        score = rec_rate * sos_mult * max(0.0, 26.0 - age)
+        if best is None or score > best:
+            best = score
+    return round(best, 4) if best is not None else None
+
+
+def _total_yards_rate(seasons: list[dict], min_games: int = 6) -> float | None:
+    """
+    JJ's 'adjusted yards per team play' for RBs (Ep 1081, Feb 2026).
+
+    Formula:
+      base  = (rec_yards + rush_yards) / team_pass_attempts
+              [team rush_att not stored; pass_att is closest available proxy]
+      × SOS mult  = max(0.70, min(1.30, 1 + (sp_plus − 5) / 100))
+      × age mult  = max(0, 26 − age_at_season_start)
+
+    Taken as MAXIMUM across qualifying seasons (≥ min_games).
+    Captures total RB contribution relative to team passing volume,
+    age- and schedule-adjusted.
+    min_team_pass_att (200) guards against option-offense inflation (Navy etc.).
+    """
+    best = None
+    for s in seasons:
+        if (s.get("games_played") or 0) < min_games:
+            continue
+        team_pass_att = s.get("team_pass_att")
+        if not team_pass_att or team_pass_att < 200:
+            continue
+        total_yards = (s.get("rec_yards") or 0) + (s.get("rush_yards") or 0)
+        age = s.get("age_at_season_start")
+        if age is None:
+            continue
+        sp_plus = s.get("sp_plus_rating")
+        sos_mult = (
+            max(0.70, min(1.30, 1.0 + (sp_plus - 5.0) / 100.0))
+            if sp_plus is not None else 1.0
+        )
+        rate = (total_yards / team_pass_att) * sos_mult * max(0.0, 26.0 - age)
+        if best is None or rate > best:
+            best = rate
+    return round(best, 4) if best is not None else None
+
+
 def _compute_teammate_score(
     player_id: int,
     draft_year: int,
@@ -408,7 +616,6 @@ def _build_row(
     draft_pick = cfb["draft_picks"].get(cfb_player_id, {})
     combine = cfb["combine"].get(cfb_player_id, {})
     recruiting = cfb["recruiting"].get(cfb_player_id, {})
-    pff = cfb["pff"].get(cfb_player_id, {})
 
     # Big board — try exact name, then cfb_full_name
     board_key = (nfl_name, draft_year)
@@ -428,8 +635,12 @@ def _build_row(
         career_rec_yards / career_targets if career_targets > 0 else None
     )
 
-    # Breakout age
+    # Breakout age (kept for diagnostic reference)
     breakout_age = _breakout_age(seasons_raw, position, min_games=min_games)
+    # Breakout score: WR primary input (rec_rate × SOS mult × age mult)
+    best_breakout_score = _breakout_score(seasons_raw, min_games=min_games)
+    # Total yards rate: RB primary input ((rec+rush yds)/team_pass_att × SOS mult × age mult)
+    best_total_yards_rate = _total_yards_rate(seasons_raw, min_games=min_games)
 
     # Best season per-play rates
     best_targets_val = best.get("targets") or 0
@@ -529,8 +740,12 @@ def _build_row(
         "best_rush_ypc": best_rush_ypc,
         "best_yards_per_touch": best_yards_per_touch,
         "college_fantasy_ppg": college_fantasy_ppg,
-        # Breakout age (JJ definition: first season crossing dominator threshold)
+        # Breakout age (diagnostic reference — not used in models)
         "breakout_age": breakout_age,
+        # Breakout score: WR primary input (rec_rate × SOS mult × age mult)
+        "best_breakout_score": best_breakout_score,
+        # Total yards rate: RB primary input ((rec+rush)/team_pass_att × SOS mult × age mult)
+        "best_total_yards_rate": best_total_yards_rate,
         # Career totals
         "career_seasons": career_seasons,
         "career_rec_yards": career_rec_yards,
@@ -562,20 +777,33 @@ def _build_row(
         "recruit_stars": recruiting.get("recruit_stars"),
         "recruit_year": recruiting.get("recruit_year"),
         "recruit_rank_national": recruiting.get("recruit_rank_national"),
-        # PFF metrics — populated from pff_player_seasons when PFF+ data is ingested.
-        # All None until scripts/populate_pff.py --csv <export.csv> is run.
-        # Priority addition: subscribe to PFF+ (~$120/yr) for YPRR back to 2014.
-        "best_yprr": pff.get("best_yprr"),
-        "best_routes_per_game": pff.get("best_routes_per_game"),
-        "best_receiving_grade": pff.get("best_receiving_grade"),
-        "best_contested_catch_rate": pff.get("best_contested_catch_rate"),
-        "best_drop_rate": pff.get("best_drop_rate"),
-        "best_target_sep": pff.get("best_target_sep"),
+        # PFF metrics — read from best season dict (PFF merged as source of truth).
+        # Non-null for best seasons where PFF data is available (2014+ FBS players).
+        "best_yprr": best.get("yprr"),
+        "best_routes_per_game": best.get("routes_per_game"),
+        "best_receiving_grade": best.get("receiving_grade"),
+        "best_contested_catch_rate": best.get("contested_catch_rate"),
+        "best_drop_rate": best.get("drop_rate"),
+        "best_target_sep": best.get("target_separation"),
+        # PFF split scalars — depth / concept / scheme zones
+        "best_deep_yprr": best.get("deep_yprr"),
+        "best_deep_target_rate": best.get("deep_target_rate"),
+        "best_behind_los_rate": best.get("behind_los_rate"),
+        "best_slot_yprr": best.get("slot_yprr"),
+        "best_slot_target_rate": best.get("slot_target_rate"),
+        "best_screen_rate": best.get("screen_rate"),
+        "best_man_yprr": best.get("man_yprr"),
+        "best_zone_yprr": best.get("zone_yprr"),
+        "best_man_zone_delta": best.get("man_zone_delta"),
         # Pre-draft market expectation
         "consensus_rank": board.get("consensus_rank"),
         "position_rank": board.get("position_rank"),
         # Team context
         "teammate_score": teammate_score,
+        # Conference tier (JJ conference factor)
+        "power4_conf": int(best.get("conference") in _POWER4_CONFS) if best.get("conference") else None,
+        # TD share in best season (JJ's sub-20% flag for WRs)
+        "best_rec_td_pct": best.get("rec_td_pct"),
     }
 
 
@@ -590,8 +818,10 @@ def main() -> None:
     parser.add_argument("--cfb-db", type=str, default=None)
     parser.add_argument("--nfl-db", type=str, default=None)
     parser.add_argument(
-        "--min-year", type=int, default=2011,
-        help="Minimum draft year to include (default: 2011).",
+        "--min-year", type=int, default=2014,
+        help="Minimum draft year to include (default: 2014 — first year with full "
+             "PFF season coverage; pre-2014 rows use median-imputed PFF values "
+             "that create era bias in the model).",
     )
     parser.add_argument(
         "--max-year", type=int, default=2022,
