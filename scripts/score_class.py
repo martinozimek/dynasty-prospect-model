@@ -30,6 +30,7 @@ Usage:
     python scripts/score_class.py --year 2026 --model lgbm
     python scripts/score_class.py --year 2026 --output output/scores_2026.csv
     python scripts/score_class.py --year 2026 --post-draft   # use actual draft pick data
+    python scripts/score_class.py --year 2026 --phase1       # show Phase I no-capital delta
 """
 
 import argparse
@@ -789,6 +790,7 @@ def score_position(
     models_dir: Path,
     model_type: str = "ridge",
     post_draft: bool = False,
+    model_suffix: str = "",   # "" for capital model; "_nocap" for Phase I
 ) -> pd.DataFrame:
     """
     Load fitted pipeline and score prospects for one position.
@@ -800,9 +802,9 @@ def score_position(
       This ensures 100 is a true ceiling: a prospect must match or exceed the
       best training player's model projection to reach 100.
     """
-    model_path = models_dir / f"{position}_{model_type}.pkl"
-    features_path = models_dir / f"{position}_features.json"
-    metadata_path = models_dir / "metadata.json"
+    model_path = models_dir / f"{position}_{model_type}{model_suffix}.pkl"
+    features_path = models_dir / f"{position}_features{model_suffix}.json"
+    metadata_path = models_dir / f"metadata{model_suffix}.json"
 
     if not model_path.exists():
         log.warning("Model not found: %s - run fit_model.py --all first", model_path)
@@ -853,8 +855,24 @@ def score_position(
 
     keep_cols = [c for c in [
         "player_name", "position", "best_team", "best_season_year",
+        # Production
         "best_dominator", "best_rec_rate", "college_fantasy_ppg",
-        "breakout_age", "best_age", "weight_lbs", "speed_score",
+        "breakout_age", "best_age", "best_breakout_score",
+        "best_total_yards_rate", "best_usage_pass", "best_usage_rush",
+        "best_rush_ypc", "early_declare", "power4_conf",
+        # PFF efficiency
+        "best_yprr", "best_receiving_grade", "best_routes_per_game",
+        "best_drop_rate", "best_target_sep", "best_contested_catch_rate",
+        "best_deep_yprr", "best_deep_target_rate", "best_behind_los_rate",
+        "best_slot_yprr", "best_slot_target_rate", "best_screen_rate",
+        "best_man_yprr", "best_zone_yprr", "best_man_zone_delta",
+        # Athleticism
+        "weight_lbs", "height_inches", "speed_score",
+        "forty_time", "broad_jump", "vertical_jump",
+        "three_cone", "shuttle", "bench_press",
+        # Recruiting
+        "recruit_rating", "recruit_stars", "recruit_rank_national",
+        # Draft / board
         "consensus_rank", "position_rank",
         "draft_capital_score", "overall_pick", "capital_is_projected",
     ] if c in df.columns]
@@ -898,6 +916,11 @@ def main() -> None:
                         help="Output CSV path (default: output/scores_{year}.csv).")
     parser.add_argument("--min-games", type=int, default=6,
                         help="Minimum games for a college season to qualify (default: 6).")
+    parser.add_argument(
+        "--phase1", action="store_true",
+        help="Also score with Phase I (no-capital) model and show capital delta. "
+             "Requires fit_model.py --all --no-capital to have been run first.",
+    )
     args = parser.parse_args()
 
     from config import get_cfb_db_path, get_data_dir, get_nfl_db_path
@@ -999,32 +1022,101 @@ def main() -> None:
         return
 
     combined = pd.concat(all_scored, ignore_index=True)
+
+    # --- Phase I (no-capital) scoring ---
+    if args.phase1:
+        _nocap_meta_path = models_dir / "metadata_nocap.json"
+        if not _nocap_meta_path.exists():
+            print(
+                "WARNING: Phase I models not found (metadata_nocap.json missing). "
+                "Run: python scripts/fit_model.py --all --no-capital"
+            )
+        else:
+            ph1_scored = []
+            for pos in positions:
+                ph1 = score_position(
+                    position=pos,
+                    prospects_df=prospects_df,
+                    models_dir=models_dir,
+                    model_type="ridge",
+                    post_draft=args.post_draft,
+                    model_suffix="_nocap",
+                )
+                if not ph1.empty:
+                    ph1_scored.append(ph1[["player_name", "position", "zap_score"]]
+                                      .rename(columns={"zap_score": "phase1_zap"}))
+
+            if ph1_scored:
+                ph1_df = pd.concat(ph1_scored, ignore_index=True)
+                combined = combined.merge(
+                    ph1_df, on=["player_name", "position"], how="left"
+                )
+                combined["phase1_zap"] = combined["phase1_zap"].round(1)
+                combined["capital_delta"] = (
+                    combined["zap_score"] - combined["phase1_zap"]
+                ).round(1)
+
+                def _risk(delta):
+                    if pd.isna(delta):
+                        return "N/A"
+                    if delta <= -15:
+                        return "Low Risk"
+                    if delta >= 20:
+                        return "High Risk"
+                    return "Neutral"
+
+                combined["risk"] = combined["capital_delta"].apply(_risk)
+
     combined.to_csv(out_path, index=False)
     log.info("Scores written to: %s", out_path)
 
     # Print summary table
-    print(f"\n{'='*85}")
+    show_phase1 = args.phase1 and "phase1_zap" in combined.columns
+    print(f"\n{'='*95 if show_phase1 else 85}")
     print(f"  Dynasty Prospect Model - {args.year} Draft Class Scores ({args.model.upper()})")
     if not args.post_draft:
         print("  NOTE: Pre-draft - draft capital projected from big board consensus rank")
-    print(f"{'='*85}")
+    if show_phase1:
+        print("  Phase I columns: Ph1=no-capital score | Delta=ZAP-Ph1 | Risk profile")
+    print(f"{'='*95 if show_phase1 else 85}")
     for pos in positions:
         sub = combined[combined["position"] == pos]
         if sub.empty:
             continue
         print(f"\n  {pos} ({len(sub)} prospects)")
-        print(f"  {'Rank':<4} {'Player':<28} {'Proj B2S':>8} {'ZAP':>5} "
-              f"{'Dom':>6} {'RecRate':>7} {'CfpPPG':>6} {'Board':>5}")
-        print("  " + "-" * 80)
+        if show_phase1:
+            print(f"  {'Rank':<4} {'Player':<28} {'Proj B2S':>8} {'ZAP':>5} "
+                  f"{'Ph1':>5} {'Delta':>6} {'Risk':<10} "
+                  f"{'Dom':>6} {'RecRate':>7} {'Board':>5}")
+            print("  " + "-" * 92)
+        else:
+            print(f"  {'Rank':<4} {'Player':<28} {'Proj B2S':>8} {'ZAP':>5} "
+                  f"{'Dom':>6} {'RecRate':>7} {'CfpPPG':>6} {'Board':>5}")
+            print("  " + "-" * 80)
         for _, r in sub.head(20).iterrows():
-            print(
-                f"  {r['pos_rank']:<4} {r['player_name']:<28} "
-                f"{r['projected_b2s']:>8.2f} {r['zap_score']:>5.1f} "
-                f"{(r.get('best_dominator') or 0):>6.3f} "
-                f"{(r.get('best_rec_rate') or 0):>7.4f} "
-                f"{(r.get('college_fantasy_ppg') or 0):>6.1f} "
-                f"{int(r['consensus_rank']) if pd.notna(r.get('consensus_rank')) else '-':>5}"
-            )
+            if show_phase1:
+                ph1_val   = r.get("phase1_zap")
+                delta_val = r.get("capital_delta")
+                risk_val  = r.get("risk", "N/A")
+                ph1_str   = f"{ph1_val:>5.1f}" if pd.notna(ph1_val) else f"{'--':>5}"
+                delta_str = (f"{delta_val:>+6.1f}" if pd.notna(delta_val) else f"{'--':>6}")
+                print(
+                    f"  {r['pos_rank']:<4} {r['player_name']:<28} "
+                    f"{r['projected_b2s']:>8.2f} {r['zap_score']:>5.1f} "
+                    f"{ph1_str} {delta_str} {risk_val:<10} "
+                    f"{(r.get('best_dominator') or 0):>6.3f} "
+                    f"{(r.get('best_rec_rate') or 0):>7.4f} "
+                    f"{int(r['consensus_rank']) if pd.notna(r.get('consensus_rank')) else '-':>5}"
+                )
+            else:
+                print(
+                    f"  {r['pos_rank']:<4} {r['player_name']:<28} "
+                    f"{r['projected_b2s']:>8.2f} {r['zap_score']:>5.1f} "
+                    f"{(r.get('best_dominator') or 0):>6.3f} "
+                    f"{(r.get('best_rec_rate') or 0):>7.4f} "
+                    f"{(r.get('college_fantasy_ppg') or 0):>6.1f} "
+                    f"{int(r['consensus_rank']) if pd.notna(r.get('consensus_rank')) else '-':>5}"
+                )
     # Step 6: Per-year R2 transparency table (model stability calibration)
     metadata_path = _ROOT / "models" / "metadata.json"
     if metadata_path.exists():

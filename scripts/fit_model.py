@@ -39,6 +39,7 @@ Usage:
     python scripts/fit_model.py --position WR --no-lgbm      # Ridge only
     python scripts/fit_model.py --all --target top_season_ppg
     python scripts/fit_model.py --all --start-year 2011      # override 2014 default
+    python scripts/fit_model.py --all --no-capital           # Phase I: no-capital model
 """
 
 import argparse
@@ -81,7 +82,7 @@ log = logging.getLogger(__name__)
 
 _CANDIDATE_FEATURES = {
     "WR": [
-        # Draft capital
+        # Draft capital (capital model only — excluded from nocap candidate pool)
         # overall_pick REMOVED — r=−0.873 with draft_tier (VIF Step 2)
         "log_draft_capital", "draft_round",
         "draft_premium",
@@ -201,6 +202,99 @@ _CANDIDATE_FEATURES = {
         "best_slot_yprr", "best_slot_target_rate", "slot_rate_x_capital",
         "best_man_yprr", "best_zone_yprr", "best_man_zone_delta", "man_delta_x_capital",
         "best_screen_rate", "best_behind_los_rate",
+    ],
+}
+
+# ---------------------------------------------------------------------------
+# Phase I (no-capital) candidate feature sets
+# All capital, market, and interaction features excluded.
+# Phase I score answers: "where does this player rank on pure college/combine evidence?"
+# ---------------------------------------------------------------------------
+_CANDIDATE_FEATURES_NOCAP = {
+    "WR": [
+        # Production / efficiency
+        "best_breakout_score",      # rec_rate × SOS × age mult — primary WR metric
+        "best_rec_rate",
+        "best_dominator",
+        "best_age",
+        "early_declare",
+        "college_fantasy_ppg",
+        "power4_conf",
+        "recruit_rating",
+        # PFF efficiency
+        "best_yprr",
+        "best_receiving_grade",
+        "best_routes_per_game",
+        "best_man_yprr",
+        "best_zone_yprr",
+        "best_man_zone_delta",
+        "best_slot_yprr",
+        "best_slot_target_rate",
+        "best_deep_yprr",
+        "best_deep_target_rate",
+        "best_drop_rate",
+        # Athleticism
+        "speed_score",
+        "forty_time",
+        "broad_jump",
+        "vertical_jump",
+        "agility_score",
+        "weight_lbs",
+        "height_inches",
+    ],
+    "RB": [
+        # Production / efficiency
+        "best_total_yards_rate",    # primary RB metric
+        "best_breakout_score",
+        "best_rec_rate",
+        "best_dominator",
+        "best_usage_pass",
+        "best_usage_rush",
+        "college_fantasy_ppg",
+        "best_rush_ypc",
+        "best_age",
+        "early_declare",
+        "power4_conf",
+        "recruit_rating",
+        # PFF efficiency
+        "best_yprr",
+        "best_zone_yprr",
+        "best_receiving_grade",
+        "best_routes_per_game",
+        # Athleticism
+        "speed_score",
+        "forty_time",
+        "broad_jump",
+        "vertical_jump",
+        "agility_score",
+        "weight_lbs",
+    ],
+    "TE": [
+        # Production / efficiency
+        "best_breakout_score",
+        "best_rec_rate",
+        "best_dominator",
+        "best_age",
+        "college_fantasy_ppg",
+        "power4_conf",
+        "recruit_rating",
+        # PFF efficiency
+        "best_yprr",
+        "best_receiving_grade",
+        "best_routes_per_game",
+        "best_slot_target_rate",
+        "best_slot_yprr",
+        "best_deep_yprr",
+        "best_target_sep",
+        "best_drop_rate",
+        # Athleticism — important for TEs (necessary but not sufficient)
+        "speed_score",
+        "forty_time",
+        "broad_jump",
+        "vertical_jump",
+        "agility_score",
+        "weight_lbs",
+        "height_inches",
     ],
 }
 
@@ -576,16 +670,19 @@ def fit_position(
     models_dir: Path,
     fit_lgbm: bool = True,
     cv_strategy: str = "loyo",  # Step 7c: loyo | rolling | kfold
+    feature_candidates: list[str] | None = None,   # Phase I: override candidate pool
+    model_suffix: str = "",                         # Phase I: "_nocap" appended to artifact names
 ) -> dict:
     """
     Full training pipeline for one position.
     Returns metadata dict with CV scores.
     """
-    log.info("=== %s (n=%d) ===", position, len(df_all))
+    label = f"{position}{model_suffix}"
+    log.info("=== %s (n=%d) ===", label, len(df_all))
     df = df_all[df_all[target].notna()].copy()
     log.info("  %d labeled rows (have %s)", len(df), target)
 
-    candidate_cols = _CANDIDATE_FEATURES[position]
+    candidate_cols = feature_candidates if feature_candidates is not None else _CANDIDATE_FEATURES[position]
     available = [c for c in candidate_cols if c in df.columns]
     missing_cands = [c for c in candidate_cols if c not in df.columns]
     if missing_cands:
@@ -726,16 +823,16 @@ def fit_position(
 
     # --- Persist models ---
     models_dir.mkdir(parents=True, exist_ok=True)
-    joblib.dump(ridge_pipe, models_dir / f"{position}_ridge.pkl")
-    log.info("  Saved: models/%s_ridge.pkl", position)
+    joblib.dump(ridge_pipe, models_dir / f"{position}_ridge{model_suffix}.pkl")
+    log.info("  Saved: models/%s_ridge%s.pkl", position, model_suffix)
 
-    features_path = models_dir / f"{position}_features.json"
+    features_path = models_dir / f"{position}_features{model_suffix}.json"
     features_path.write_text(json.dumps(selected, indent=2))
-    log.info("  Saved: models/%s_features.json", position)
+    log.info("  Saved: models/%s_features%s.json", position, model_suffix)
 
     if lgbm_pipe is not None:
-        joblib.dump(lgbm_pipe, models_dir / f"{position}_lgbm.pkl")
-        log.info("  Saved: models/%s_lgbm.pkl", position)
+        joblib.dump(lgbm_pipe, models_dir / f"{position}_lgbm{model_suffix}.pkl")
+        log.info("  Saved: models/%s_lgbm%s.pkl", position, model_suffix)
 
     # --- Feature importance from Ridge coefficients ---
     ridge_coefs = ridge_pipe.named_steps["mdl"].coef_
@@ -800,6 +897,11 @@ def main() -> None:
         help="Primary CV strategy (default: loyo). 'rolling' and 'kfold' are also "
              "computed for TE automatically regardless of this flag.",
     )
+    parser.add_argument(
+        "--no-capital", action="store_true",
+        help="Train Phase I (no-capital) model using production/efficiency/athleticism "
+             "features only. Saves artifacts with '_nocap' suffix (e.g. WR_ridge_nocap.pkl).",
+    )
     args = parser.parse_args()
 
     from config import get_data_dir
@@ -810,6 +912,8 @@ def main() -> None:
         else ([args.position] if args.position else ["WR"])
     )
 
+    no_capital   = args.no_capital
+    model_suffix = "_nocap" if no_capital else ""
     all_meta = {}
 
     for pos in positions:
@@ -821,16 +925,18 @@ def main() -> None:
             df_all=df_eng,
             target=args.target,
             models_dir=models_dir,
-            fit_lgbm=not args.no_lgbm,
+            fit_lgbm=(not args.no_lgbm) and (not no_capital),  # no LGBM for Phase I
             cv_strategy=args.cv_strategy,
+            feature_candidates=_CANDIDATE_FEATURES_NOCAP[pos] if no_capital else None,
+            model_suffix=model_suffix,
         )
         all_meta[pos] = meta
 
         rc = meta.get("rolling_cv", {})
         kc = meta.get("kfold_cv", {})
         log.info(
-            "  %s FINAL — Ridge LOYO R²=%.3f | LGBM R²=%.3f (%s) | α=%.1f%s",
-            pos,
+            "  %s%s FINAL — Ridge LOYO R²=%.3f | LGBM R²=%.3f (%s) | α=%.1f%s",
+            pos, model_suffix,
             meta["ridge_loyo_r2"],
             meta["lgbm_loyo_r2"],
             meta["lgbm_status"],
@@ -841,13 +947,15 @@ def main() -> None:
         )
 
     # Write aggregate metadata
-    meta_path = models_dir / "metadata.json"
+    meta_path = models_dir / f"metadata{model_suffix}.json"
     models_dir.mkdir(parents=True, exist_ok=True)
     meta_path.write_text(json.dumps(all_meta, indent=2, default=str))
     log.info("Metadata saved: %s", meta_path)
 
     # Summary table
+    mode_label = " [Phase I — No Capital]" if no_capital else ""
     print("\n" + "=" * 84)
+    print(f"  Model{mode_label}")
     print(f"{'Position':8}  {'N':>4}  {'Feats':>5}  "
           f"{'Train R2':>8}  {'LOYO R2':>8}  {'LGBM R2':>8}  "
           f"{'alpha':>7}  {'LGBM Status':>20}")
