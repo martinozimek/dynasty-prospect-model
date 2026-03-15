@@ -853,6 +853,14 @@ def score_position(
         log.warning("  No training predictions in metadata - ZAP scores unavailable.")
         zap_scores = np.full(len(preds), np.nan)
 
+    # D1: Conformal prediction intervals from LOYO residual distribution
+    loyo_residuals = np.array(metadata.get(position, {}).get("loyo_abs_residuals", []))
+    if len(loyo_residuals) > 0:
+        q80 = float(np.quantile(loyo_residuals, 0.80))
+        q90 = float(np.quantile(loyo_residuals, 0.90))
+    else:
+        q80 = q90 = float("nan")
+
     keep_cols = [c for c in [
         "player_name", "position", "best_team", "best_season_year",
         # Production
@@ -880,6 +888,11 @@ def score_position(
     result = df[keep_cols].copy()
     result["projected_b2s"] = preds.round(2)
     result["zap_score"]     = zap_scores.round(1)
+    if not np.isnan(q80):
+        result["b2s_lo80"] = (preds - q80).clip(min=0).round(2)
+        result["b2s_hi80"] = (preds + q80).round(2)
+        result["b2s_lo90"] = (preds - q90).clip(min=0).round(2)
+        result["b2s_hi90"] = (preds + q90).round(2)
     result["model"]         = model_type
     result["post_draft"]    = post_draft
     result = result.sort_values("zap_score", ascending=False).reset_index(drop=True)
@@ -1084,16 +1097,25 @@ def main() -> None:
         if sub.empty:
             continue
         print(f"\n  {pos} ({len(sub)} prospects)")
+        # Check if interval columns exist for this position subset
+        _has_interval = "b2s_lo80" in sub.columns and sub["b2s_lo80"].notna().any()
+        _ivl_hdr = f"{'80% Interval':>14}" if _has_interval else ""
+        _ivl_w   = 15 if _has_interval else 0
         if show_phase1:
             print(f"  {'Rank':<4} {'Player':<28} {'Proj B2S':>8} {'ZAP':>5} "
                   f"{'Ph1':>5} {'Delta':>6} {'Risk':<10} "
-                  f"{'Dom':>6} {'RecRate':>7} {'Board':>5}")
-            print("  " + "-" * 92)
+                  f"{_ivl_hdr}{'Dom':>6} {'RecRate':>7} {'Board':>5}")
+            print("  " + "-" * (92 + _ivl_w))
         else:
             print(f"  {'Rank':<4} {'Player':<28} {'Proj B2S':>8} {'ZAP':>5} "
-                  f"{'Dom':>6} {'RecRate':>7} {'CfpPPG':>6} {'Board':>5}")
-            print("  " + "-" * 80)
+                  f"{_ivl_hdr}{'Dom':>6} {'RecRate':>7} {'CfpPPG':>6} {'Board':>5}")
+            print("  " + "-" * (80 + _ivl_w))
         for _, r in sub.head(20).iterrows():
+            if _has_interval and pd.notna(r.get("b2s_lo80")):
+                _ivl_str = f"[{r['b2s_lo80']:.1f}–{r['b2s_hi80']:.1f}]"
+                _ivl_col = f"{_ivl_str:>14} "
+            else:
+                _ivl_col = f"{'':>{_ivl_w}}" if _ivl_w else ""
             if show_phase1:
                 ph1_val   = r.get("phase1_zap")
                 delta_val = r.get("capital_delta")
@@ -1104,6 +1126,7 @@ def main() -> None:
                     f"  {r['pos_rank']:<4} {r['player_name']:<28} "
                     f"{r['projected_b2s']:>8.2f} {r['zap_score']:>5.1f} "
                     f"{ph1_str} {delta_str} {risk_val:<10} "
+                    f"{_ivl_col}"
                     f"{(r.get('best_dominator') or 0):>6.3f} "
                     f"{(r.get('best_rec_rate') or 0):>7.4f} "
                     f"{int(r['consensus_rank']) if pd.notna(r.get('consensus_rank')) else '-':>5}"
@@ -1112,6 +1135,7 @@ def main() -> None:
                 print(
                     f"  {r['pos_rank']:<4} {r['player_name']:<28} "
                     f"{r['projected_b2s']:>8.2f} {r['zap_score']:>5.1f} "
+                    f"{_ivl_col}"
                     f"{(r.get('best_dominator') or 0):>6.3f} "
                     f"{(r.get('best_rec_rate') or 0):>7.4f} "
                     f"{(r.get('college_fantasy_ppg') or 0):>6.1f} "
@@ -1149,6 +1173,12 @@ def main() -> None:
             low_conf = [y["year"] for y in year_results if y["r2"] < 0.20]
             if low_conf:
                 print(f"    * Low-confidence years (R2<0.20): {low_conf} - treat rankings as approximate.")
+            # D3: rank-order calibration
+            rho   = pos_meta.get("loyo_spearman_rho")
+            top25 = pos_meta.get("loyo_top25_hit_rate")
+            if rho is not None and rho == rho:
+                top25_str = f"  Top-25% hit rate={top25:.1%}" if (top25 is not None and top25 == top25) else ""
+                print(f"    Rank-order calibration: Spearman rho={rho:.3f}{top25_str} (vs 25% base rate)")
 
         # Also print rolling/kfold for TE
         te_meta = metadata.get("TE", {})

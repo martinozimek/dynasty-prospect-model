@@ -53,6 +53,7 @@ import joblib
 import numpy as np
 import pandas as pd
 from lightgbm import LGBMRegressor
+from scipy.stats import spearmanr
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LassoCV, Ridge, RidgeCV
 from sklearn.metrics import mean_absolute_error, r2_score
@@ -485,7 +486,9 @@ def _loyo_cv(
 
     if not all_actual:
         return {"year_results": year_results, "r2": float("nan"),
-                "mae": float("nan"), "rmse": float("nan")}
+                "mae": float("nan"), "rmse": float("nan"),
+                "abs_residuals": [], "spearman_rho": float("nan"),
+                "top25_hit_rate": float("nan")}
 
     all_actual    = np.array(all_actual)
     all_predicted = np.array(all_predicted)
@@ -493,7 +496,23 @@ def _loyo_cv(
     agg_mae  = float(mean_absolute_error(all_actual, all_predicted))
     agg_rmse = float(np.sqrt(np.mean((all_actual - all_predicted) ** 2)))
 
-    return {"year_results": year_results, "r2": agg_r2, "mae": agg_mae, "rmse": agg_rmse}
+    # D1: conformal interval residuals
+    abs_residuals = np.abs(all_actual - all_predicted).tolist()
+
+    # D3: rank-order calibration metrics
+    rho, _ = spearmanr(all_predicted, all_actual)
+    q75_actual = np.quantile(all_actual, 0.75)
+    q75_pred   = np.quantile(all_predicted, 0.75)
+    top25_mask = all_actual >= q75_actual
+    top25_hit_rate = float(np.mean(all_predicted[top25_mask] >= q75_pred)) if top25_mask.any() else float("nan")
+
+    return {
+        "year_results": year_results,
+        "r2": agg_r2, "mae": agg_mae, "rmse": agg_rmse,
+        "abs_residuals": [round(float(v), 4) for v in abs_residuals],
+        "spearman_rho": round(float(rho), 4),
+        "top25_hit_rate": round(top25_hit_rate, 4),
+    }
 
 
 def _rolling_cv(
@@ -865,6 +884,11 @@ def fit_position(
         ],
         # Training predictions — ZAP score reference (percentile vs this distribution)
         "train_preds": [round(float(p), 4) for p in train_preds_arr],
+        # D1: conformal prediction interval residuals from LOYO-CV
+        "loyo_abs_residuals": cv_ridge.get("abs_residuals", []),
+        # D3: rank-order calibration metrics
+        "loyo_spearman_rho":   cv_ridge.get("spearman_rho", float("nan")),
+        "loyo_top25_hit_rate": cv_ridge.get("top25_hit_rate", float("nan")),
     }
 
 

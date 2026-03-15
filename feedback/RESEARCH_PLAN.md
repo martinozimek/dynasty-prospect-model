@@ -1,7 +1,7 @@
 # Model Research Plan — dynasty-prospect-model
 **Branch:** model-research
 **Created:** 2026-03-14
-**Status:** Phase A Complete — No Phase B/C changes warranted
+**Status:** Phase D1 + D3 Complete
 
 ---
 
@@ -62,9 +62,9 @@ These are free information. Results inform all subsequent decisions.
 
 | # | Change | Condition to implement | Status |
 |---|--------|------------------------|--------|
-| D1 | Conformal prediction intervals | Calibration test (A3) confirms ZAP-to-B2S mapping is reliable enough to anchor intervals | **CONDITION MET** — all 3 positions show strong Spearman (0.60–0.63) and good decile calibration |
+| D1 | Conformal prediction intervals | Calibration test (A3) confirms ZAP-to-B2S mapping is reliable enough to anchor intervals | **COMPLETE** — 80%/90% intervals added to score_class.py output and CSV; residuals stored in metadata.json |
 | D2 | Ensemble blend (Ridge + LGBM) | Ensemble LOYO R² > pure Ridge across all positions | OPEN — not tested; LGBM historically underperformed Ridge on LOYO |
-| D3 | Ranking metrics in output (Spearman, top-12 hit rate) | Always add — reporting improvement, not model change | OPEN — easy win, can add at any time |
+| D3 | Ranking metrics in output (Spearman, top-12 hit rate) | Always add — reporting improvement, not model change | **COMPLETE** — Spearman rho and top-25% hit rate added to score_class.py footer |
 | D4 | Bayesian Ridge for TE | Only if A1 shows severe TE coefficient instability AND D-equivalent Bayesian model improves LOYO R² | NOT WARRANTED — TE features all ≥49% stable; not severe instability |
 
 ---
@@ -245,3 +245,5 @@ delta / Phase I model has a valid foundation.
 | 2026-03-14 | REJECT D4 (Bayesian Ridge for TE) | A1: TE features all ≥49% stable; not severe instability |
 | 2026-03-14 | DOCUMENT only (RB near-capital-only) | A5: RB non-capital adds only +0.004 LOYO R². No change warranted — this is expected given JJ's research. Document for transparency. |
 | 2026-03-14 | DOCUMENT only (RB marginal features) | A2: total_yards_rate_x_capital / best_rush_ypc / college_fantasy_ppg each slightly negative but all <0.005 LOYO R² — not fundamental; no change warranted |
+| 2026-03-15 | IMPLEMENT D1 (conformal intervals) | 80%/90% LOYO residual intervals added to score_class.py output. Residuals stored in metadata.json. WR q80=5.37, RB q80=5.80, TE q80=3.89 |
+| 2026-03-15 | IMPLEMENT D3 (ranking metrics) | Spearman rho and top-25% hit rate added to score_class.py footer. WR: rho=0.599/52%, RB: rho=0.620/62%, TE: rho=0.621/60% |
