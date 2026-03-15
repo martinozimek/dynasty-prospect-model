@@ -1,7 +1,7 @@
 # Model Research Plan — dynasty-prospect-model
 **Branch:** model-research
 **Created:** 2026-03-14
-**Status:** Phase D1 + D3 Complete
+**Status:** All phases complete — model-research branch finalized
 
 ---
 
@@ -43,7 +43,7 @@ These are free information. Results inform all subsequent decisions.
 |---|--------|------------------------|--------|
 | B1 | Add `best_target_share` + `target_share_x_capital` | A1 shows it is not already captured; LOYO R² improves | NOT WARRANTED — A1 shows existing WR PFF coverage is adequate |
 | B2 | Add trajectory features (`yprr_growth`, `target_share_growth`, `career_avg_yprr`) | A1 shows best-season instability; trajectory adds >0.005 LOYO R² | NOT WARRANTED — WR best-season features all ≥53% stable |
-| B3 | Add missingness indicator flags (`forty_missing`, `combine_missing`) | A8-style test shows combine missingness is non-random | DEFERRED — Phase A did not include missingness pattern test; can revisit |
+| B3 | Add missingness indicator flags (`forty_missing`, `combine_missing`) | A8-style test shows combine missingness is non-random | REJECTED — TE significant (p=0.010) but redundant with capital (r=−0.341); WR/RB not significant; 2021 COVID confound degrades flag |
 | B4 | Empirical draft capital curve (test log/sqrt/exp variants) | Capital-only LOYO R² improves over current exp decay | NOT WARRANTED — current capital curve performs well (see A5); no gap to exploit |
 | B5 | Age multiplier sensitivity (test exp vs linear vs reciprocal) | Breakout score LOYO R² improves measurably | NOT WARRANTED — A2 shows best_age contributes positively; age formula stable |
 
@@ -54,7 +54,7 @@ These are free information. Results inform all subsequent decisions.
 | # | Change | Condition to implement | Status |
 |---|--------|------------------------|--------|
 | C1 | Zero-fill B2S for non-qualifying players (survivorship fix) | Calibration curve (A3) shows systematic overconfidence at bottom ZAP deciles | NOT WARRANTED — A3 shows no systematic bottom-decile overconfidence for any position |
-| C2 | TE 5-year label window experiment | TE LOYO R² improves with 5-year window vs 3-year | OPEN — A3/A5 don't speak directly to label window; can revisit if TE LOYO R² stagnates |
+| C2 | TE 5-year label window experiment | TE LOYO R² improves with 5-year window vs 3-year | DEFERRED — 2022 class TEs lack 5th season data until after 2026 NFL season; requires nfl-fantasy-db change |
 
 ---
 
@@ -63,7 +63,7 @@ These are free information. Results inform all subsequent decisions.
 | # | Change | Condition to implement | Status |
 |---|--------|------------------------|--------|
 | D1 | Conformal prediction intervals | Calibration test (A3) confirms ZAP-to-B2S mapping is reliable enough to anchor intervals | **COMPLETE** — 80%/90% intervals added to score_class.py output and CSV; residuals stored in metadata.json |
-| D2 | Ensemble blend (Ridge + LGBM) | Ensemble LOYO R² > pure Ridge across all positions | OPEN — not tested; LGBM historically underperformed Ridge on LOYO |
+| D2 | Ensemble blend (Ridge + LGBM) | Ensemble LOYO R² > pure Ridge across all positions | REJECTED — Ridge beats all blends (0.5–0.8 weight) in all positions; condition not met |
 | D3 | Ranking metrics in output (Spearman, top-12 hit rate) | Always add — reporting improvement, not model change | **COMPLETE** — Spearman rho and top-25% hit rate added to score_class.py footer |
 | D4 | Bayesian Ridge for TE | Only if A1 shows severe TE coefficient instability AND D-equivalent Bayesian model improves LOYO R² | NOT WARRANTED — TE features all ≥49% stable; not severe instability |
 
@@ -247,3 +247,6 @@ delta / Phase I model has a valid foundation.
 | 2026-03-14 | DOCUMENT only (RB marginal features) | A2: total_yards_rate_x_capital / best_rush_ypc / college_fantasy_ppg each slightly negative but all <0.005 LOYO R² — not fundamental; no change warranted |
 | 2026-03-15 | IMPLEMENT D1 (conformal intervals) | 80%/90% LOYO residual intervals added to score_class.py output. Residuals stored in metadata.json. WR q80=5.37, RB q80=5.80, TE q80=3.89 |
 | 2026-03-15 | IMPLEMENT D3 (ranking metrics) | Spearman rho and top-25% hit rate added to score_class.py footer. WR: rho=0.599/52%, RB: rho=0.620/62%, TE: rho=0.621/60% |
+| 2026-03-15 | REJECT B3 (missingness flags) | Mann-Whitney: WR p=0.231, RB p=0.139 (not significant); TE p=0.010 but r_vs_capital=−0.341 — redundant with capital; 2021 COVID combine cancellation degrades flag further |
+| 2026-03-15 | REJECT D2 (ensemble blend) | Ridge beats all blends at all weights (0.5–0.8): WR Ridge=0.312 vs best blend=0.305; RB 0.363 vs 0.360; TE 0.311 vs 0.302 |
+| 2026-03-15 | DEFER C2 (TE 5-year label) | 2022 TE class (16% of training set) lacks 5th season until after 2026 NFL season; nfl-fantasy-db pipeline change required; revisit Jan 2027 |
