@@ -1,0 +1,1176 @@
+{
+  "WR": {
+    "full_features": [
+      "log_draft_capital",
+      "draft_tier",
+      "breakout_score_x_capital",
+      "best_age",
+      "early_declare",
+      "best_routes_per_game",
+      "best_man_yprr",
+      "best_man_zone_delta"
+    ],
+    "A1_bootstrap": [
+      {
+        "feature": "best_age",
+        "freq": 0.944,
+        "count": 944
+      },
+      {
+        "feature": "log_draft_capital",
+        "freq": 0.869,
+        "count": 869
+      },
+      {
+        "feature": "best_routes_per_game",
+        "freq": 0.789,
+        "count": 789
+      },
+      {
+        "feature": "early_declare",
+        "freq": 0.769,
+        "count": 769
+      },
+      {
+        "feature": "draft_tier",
+        "freq": 0.717,
+        "count": 717
+      },
+      {
+        "feature": "best_slot_yprr",
+        "freq": 0.695,
+        "count": 695
+      },
+      {
+        "feature": "best_man_zone_delta",
+        "freq": 0.674,
+        "count": 674
+      },
+      {
+        "feature": "best_deep_yprr",
+        "freq": 0.599,
+        "count": 599
+      },
+      {
+        "feature": "breakout_score_x_capital",
+        "freq": 0.581,
+        "count": 581
+      },
+      {
+        "feature": "best_drop_rate",
+        "freq": 0.566,
+        "count": 566
+      },
+      {
+        "feature": "best_man_yprr",
+        "freq": 0.529,
+        "count": 529
+      },
+      {
+        "feature": "best_zone_yprr",
+        "freq": 0.528,
+        "count": 528
+      },
+      {
+        "feature": "best_yprr",
+        "freq": 0.455,
+        "count": 455
+      },
+      {
+        "feature": "best_behind_los_rate",
+        "freq": 0.443,
+        "count": 443
+      },
+      {
+        "feature": "weight_lbs",
+        "freq": 0.442,
+        "count": 442
+      },
+      {
+        "feature": "best_ppa_pass",
+        "freq": 0.441,
+        "count": 441
+      },
+      {
+        "feature": "power4_conf",
+        "freq": 0.438,
+        "count": 438
+      },
+      {
+        "feature": "recruit_rating",
+        "freq": 0.438,
+        "count": 438
+      },
+      {
+        "feature": "deep_target_x_capital",
+        "freq": 0.429,
+        "count": 429
+      },
+      {
+        "feature": "best_slot_target_rate",
+        "freq": 0.429,
+        "count": 429
+      },
+      {
+        "feature": "consensus_rank",
+        "freq": 0.423,
+        "count": 423
+      },
+      {
+        "feature": "slot_rate_x_capital",
+        "freq": 0.423,
+        "count": 423
+      },
+      {
+        "feature": "teammate_score",
+        "freq": 0.416,
+        "count": 416
+      },
+      {
+        "feature": "log_dominator",
+        "freq": 0.408,
+        "count": 408
+      },
+      {
+        "feature": "best_breakout_score",
+        "freq": 0.38,
+        "count": 380
+      },
+      {
+        "feature": "best_rec_td_pct",
+        "freq": 0.342,
+        "count": 342
+      },
+      {
+        "feature": "man_delta_x_capital",
+        "freq": 0.342,
+        "count": 342
+      },
+      {
+        "feature": "best_deep_target_rate",
+        "freq": 0.329,
+        "count": 329
+      },
+      {
+        "feature": "college_fantasy_ppg",
+        "freq": 0.304,
+        "count": 304
+      },
+      {
+        "feature": "best_reception_share",
+        "freq": 0.279,
+        "count": 279
+      },
+      {
+        "feature": "draft_round",
+        "freq": 0.264,
+        "count": 264
+      },
+      {
+        "feature": "draft_premium",
+        "freq": 0.26,
+        "count": 260
+      },
+      {
+        "feature": "best_screen_rate",
+        "freq": 0.248,
+        "count": 248
+      },
+      {
+        "feature": "breakout_score_x_dominator",
+        "freq": 0.233,
+        "count": 233
+      },
+      {
+        "feature": "capital_x_age",
+        "freq": 0.229,
+        "count": 229
+      },
+      {
+        "feature": "best_receiving_grade",
+        "freq": 0.223,
+        "count": 223
+      },
+      {
+        "feature": "best_usage_pass",
+        "freq": 0.218,
+        "count": 218
+      },
+      {
+        "feature": "rec_rate_x_capital",
+        "freq": 0.196,
+        "count": 196
+      },
+      {
+        "feature": "career_yardage",
+        "freq": 0.191,
+        "count": 191
+      },
+      {
+        "feature": "best_dominator",
+        "freq": 0.186,
+        "count": 186
+      },
+      {
+        "feature": "career_receptions",
+        "freq": 0.171,
+        "count": 171
+      },
+      {
+        "feature": "best_rec_rate",
+        "freq": 0.162,
+        "count": 162
+      },
+      {
+        "feature": "capital_x_dominator",
+        "freq": 0.15,
+        "count": 150
+      },
+      {
+        "feature": "position_rank",
+        "freq": 0.148,
+        "count": 148
+      },
+      {
+        "feature": "best_rec_yards",
+        "freq": 0.14,
+        "count": 140
+      },
+      {
+        "feature": "best_receptions",
+        "freq": 0.134,
+        "count": 134
+      },
+      {
+        "feature": "log_rec_rate",
+        "freq": 0.132,
+        "count": 132
+      },
+      {
+        "feature": "yprr_x_capital",
+        "freq": 0.132,
+        "count": 132
+      },
+      {
+        "feature": "deep_yprr_x_capital",
+        "freq": 0.126,
+        "count": 126
+      },
+      {
+        "feature": "career_rec_yards",
+        "freq": 0.106,
+        "count": 106
+      },
+      {
+        "feature": "college_fpg_x_capital",
+        "freq": 0.096,
+        "count": 96
+      }
+    ],
+    "A2_knockout": [
+      {
+        "feature": "best_age",
+        "loyo_r2": 0.3413753055092493,
+        "delta": -0.01655166943863362
+      },
+      {
+        "feature": "log_draft_capital",
+        "loyo_r2": 0.34575539720015525,
+        "delta": -0.012171577747727702
+      },
+      {
+        "feature": "best_routes_per_game",
+        "loyo_r2": 0.3525900265005615,
+        "delta": -0.005336948447321466
+      },
+      {
+        "feature": "breakout_score_x_capital",
+        "loyo_r2": 0.35525323812213605,
+        "delta": -0.0026737368257468974
+      },
+      {
+        "feature": "draft_tier",
+        "loyo_r2": 0.35603465438979265,
+        "delta": -0.001892320558090299
+      },
+      {
+        "feature": "best_man_yprr",
+        "loyo_r2": 0.3573479353584683,
+        "delta": -0.0005790395894146316
+      },
+      {
+        "feature": "BASELINE",
+        "loyo_r2": 0.35792697494788295,
+        "delta": 0.0
+      },
+      {
+        "feature": "best_man_zone_delta",
+        "loyo_r2": 0.3583458945372001,
+        "delta": 0.0004189195893171682
+      },
+      {
+        "feature": "early_declare",
+        "loyo_r2": 0.35884284419463197,
+        "delta": 0.0009158692467490237
+      }
+    ],
+    "A3_calibration": {
+      "bins": [
+        {
+          "bin_label": "0\u201310",
+          "n": 23,
+          "pred_b2s_mean": 2.24,
+          "actual_b2s_mean": 2.82,
+          "bias": -0.58
+        },
+        {
+          "bin_label": "10\u201320",
+          "n": 25,
+          "pred_b2s_mean": 3.31,
+          "actual_b2s_mean": 2.44,
+          "bias": 0.87
+        },
+        {
+          "bin_label": "20\u201330",
+          "n": 16,
+          "pred_b2s_mean": 3.72,
+          "actual_b2s_mean": 2.91,
+          "bias": 0.81
+        },
+        {
+          "bin_label": "30\u201340",
+          "n": 26,
+          "pred_b2s_mean": 4.51,
+          "actual_b2s_mean": 3.05,
+          "bias": 1.46
+        },
+        {
+          "bin_label": "40\u201350",
+          "n": 25,
+          "pred_b2s_mean": 5.58,
+          "actual_b2s_mean": 6.79,
+          "bias": -1.21
+        },
+        {
+          "bin_label": "50\u201360",
+          "n": 19,
+          "pred_b2s_mean": 6.77,
+          "actual_b2s_mean": 7.18,
+          "bias": -0.41
+        },
+        {
+          "bin_label": "60\u201370",
+          "n": 24,
+          "pred_b2s_mean": 7.86,
+          "actual_b2s_mean": 8.21,
+          "bias": -0.34
+        },
+        {
+          "bin_label": "70\u201380",
+          "n": 20,
+          "pred_b2s_mean": 8.86,
+          "actual_b2s_mean": 9.77,
+          "bias": -0.91
+        },
+        {
+          "bin_label": "80\u201390",
+          "n": 24,
+          "pred_b2s_mean": 10.19,
+          "actual_b2s_mean": 10.07,
+          "bias": 0.12
+        },
+        {
+          "bin_label": "90\u2013100",
+          "n": 22,
+          "pred_b2s_mean": 12.41,
+          "actual_b2s_mean": 12.32,
+          "bias": 0.08
+        }
+      ],
+      "spearman_rho": 0.5988,
+      "spearman_p": 0.0,
+      "top25pct_hit_rate_at_zap75": 0.547,
+      "top25pct_base_rate": 0.25
+    },
+    "A4_permutation": {
+      "real_loyo_r2": 0.3579,
+      "perm_mean": -0.0277,
+      "perm_std": 0.0171,
+      "perm_max": 0.0157,
+      "p_value": 0.0,
+      "signal_confirmed": true
+    },
+    "A5_decomposition": {
+      "capital_only_loyo_r2": 0.3107,
+      "phase1_loyo_r2": 0.2116,
+      "full_model_loyo_r2": 0.3579,
+      "capital_features": [
+        "log_draft_capital",
+        "overall_pick",
+        "draft_tier",
+        "breakout_score_x_capital",
+        "combined_ath_x_capital"
+      ],
+      "phase1_features": [
+        "best_breakout_score",
+        "best_dominator",
+        "best_age",
+        "early_declare",
+        "best_yprr",
+        "best_routes_per_game",
+        "best_man_yprr",
+        "best_zone_yprr",
+        "best_man_zone_delta",
+        "best_slot_yprr",
+        "best_deep_yprr",
+        "best_deep_target_rate",
+        "best_drop_rate",
+        "speed_score",
+        "vertical_jump"
+      ],
+      "incremental_over_cap": 0.0472,
+      "incremental_over_nocap": 0.1464
+    }
+  },
+  "RB": {
+    "full_features": [
+      "log_draft_capital",
+      "capital_x_age",
+      "total_yards_rate_x_capital",
+      "position_rank",
+      "best_usage_pass",
+      "college_fantasy_ppg",
+      "best_rush_ypc",
+      "best_zone_yprr"
+    ],
+    "A1_bootstrap": [
+      {
+        "feature": "best_zone_yprr",
+        "freq": 0.855,
+        "count": 855
+      },
+      {
+        "feature": "best_usage_pass",
+        "freq": 0.832,
+        "count": 832
+      },
+      {
+        "feature": "log_draft_capital",
+        "freq": 0.826,
+        "count": 826
+      },
+      {
+        "feature": "capital_x_age",
+        "freq": 0.781,
+        "count": 781
+      },
+      {
+        "feature": "best_rush_ypc",
+        "freq": 0.614,
+        "count": 614
+      },
+      {
+        "feature": "is_top16_rb",
+        "freq": 0.612,
+        "count": 612
+      },
+      {
+        "feature": "position_rank",
+        "freq": 0.556,
+        "count": 556
+      },
+      {
+        "feature": "college_fantasy_ppg",
+        "freq": 0.517,
+        "count": 517
+      },
+      {
+        "feature": "combined_ath",
+        "freq": 0.438,
+        "count": 438
+      },
+      {
+        "feature": "draft_tier",
+        "freq": 0.426,
+        "count": 426
+      },
+      {
+        "feature": "career_yardage",
+        "freq": 0.414,
+        "count": 414
+      },
+      {
+        "feature": "teammate_score",
+        "freq": 0.401,
+        "count": 401
+      },
+      {
+        "feature": "best_man_yprr",
+        "freq": 0.399,
+        "count": 399
+      },
+      {
+        "feature": "speed_score",
+        "freq": 0.396,
+        "count": 396
+      },
+      {
+        "feature": "best_yards_per_touch",
+        "freq": 0.385,
+        "count": 385
+      },
+      {
+        "feature": "consensus_rank",
+        "freq": 0.352,
+        "count": 352
+      },
+      {
+        "feature": "recruit_rating",
+        "freq": 0.341,
+        "count": 341
+      },
+      {
+        "feature": "broad_jump",
+        "freq": 0.326,
+        "count": 326
+      },
+      {
+        "feature": "power4_conf",
+        "freq": 0.323,
+        "count": 323
+      },
+      {
+        "feature": "agility_score",
+        "freq": 0.321,
+        "count": 321
+      },
+      {
+        "feature": "weight_lbs",
+        "freq": 0.316,
+        "count": 316
+      },
+      {
+        "feature": "early_declare",
+        "freq": 0.303,
+        "count": 303
+      },
+      {
+        "feature": "vertical_jump",
+        "freq": 0.264,
+        "count": 264
+      },
+      {
+        "feature": "best_behind_los_rate",
+        "freq": 0.261,
+        "count": 261
+      },
+      {
+        "feature": "best_screen_rate",
+        "freq": 0.251,
+        "count": 251
+      },
+      {
+        "feature": "best_age",
+        "freq": 0.249,
+        "count": 249
+      },
+      {
+        "feature": "total_yards_rate_x_capital",
+        "freq": 0.244,
+        "count": 244
+      },
+      {
+        "feature": "best_total_yards_rate",
+        "freq": 0.24,
+        "count": 240
+      },
+      {
+        "feature": "career_rec_yards",
+        "freq": 0.224,
+        "count": 224
+      },
+      {
+        "feature": "best_rec_rate",
+        "freq": 0.202,
+        "count": 202
+      },
+      {
+        "feature": "draft_round",
+        "freq": 0.166,
+        "count": 166
+      },
+      {
+        "feature": "best_reception_share",
+        "freq": 0.122,
+        "count": 122
+      },
+      {
+        "feature": "best_man_zone_delta",
+        "freq": 0.094,
+        "count": 94
+      }
+    ],
+    "A2_knockout": [
+      {
+        "feature": "capital_x_age",
+        "loyo_r2": 0.39966307021845837,
+        "delta": -0.025639883458352775
+      },
+      {
+        "feature": "best_zone_yprr",
+        "loyo_r2": 0.410356406333268,
+        "delta": -0.01494654734354317
+      },
+      {
+        "feature": "log_draft_capital",
+        "loyo_r2": 0.4177262275364786,
+        "delta": -0.007576726140332557
+      },
+      {
+        "feature": "position_rank",
+        "loyo_r2": 0.41838720563278176,
+        "delta": -0.006915748044029391
+      },
+      {
+        "feature": "BASELINE",
+        "loyo_r2": 0.42530295367681115,
+        "delta": 0.0
+      },
+      {
+        "feature": "best_usage_pass",
+        "loyo_r2": 0.42531098147086477,
+        "delta": 8.027794053622195e-06
+      },
+      {
+        "feature": "total_yards_rate_x_capital",
+        "loyo_r2": 0.4266309815266264,
+        "delta": 0.0013280278498152276
+      },
+      {
+        "feature": "best_rush_ypc",
+        "loyo_r2": 0.4273158755004606,
+        "delta": 0.0020129218236494273
+      },
+      {
+        "feature": "college_fantasy_ppg",
+        "loyo_r2": 0.42854354006184503,
+        "delta": 0.0032405863850338834
+      }
+    ],
+    "A3_calibration": {
+      "bins": [
+        {
+          "bin_label": "0\u201310",
+          "n": 14,
+          "pred_b2s_mean": 2.56,
+          "actual_b2s_mean": 3.91,
+          "bias": -1.35
+        },
+        {
+          "bin_label": "10\u201320",
+          "n": 12,
+          "pred_b2s_mean": 4.15,
+          "actual_b2s_mean": 2.81,
+          "bias": 1.33
+        },
+        {
+          "bin_label": "20\u201330",
+          "n": 18,
+          "pred_b2s_mean": 4.88,
+          "actual_b2s_mean": 4.81,
+          "bias": 0.07
+        },
+        {
+          "bin_label": "30\u201340",
+          "n": 16,
+          "pred_b2s_mean": 5.82,
+          "actual_b2s_mean": 4.6,
+          "bias": 1.21
+        },
+        {
+          "bin_label": "40\u201350",
+          "n": 15,
+          "pred_b2s_mean": 6.73,
+          "actual_b2s_mean": 6.49,
+          "bias": 0.24
+        },
+        {
+          "bin_label": "50\u201360",
+          "n": 13,
+          "pred_b2s_mean": 7.48,
+          "actual_b2s_mean": 7.55,
+          "bias": -0.06
+        },
+        {
+          "bin_label": "60\u201370",
+          "n": 13,
+          "pred_b2s_mean": 8.52,
+          "actual_b2s_mean": 8.6,
+          "bias": -0.08
+        },
+        {
+          "bin_label": "70\u201380",
+          "n": 15,
+          "pred_b2s_mean": 10.15,
+          "actual_b2s_mean": 10.66,
+          "bias": -0.51
+        },
+        {
+          "bin_label": "80\u201390",
+          "n": 16,
+          "pred_b2s_mean": 11.67,
+          "actual_b2s_mean": 11.08,
+          "bias": 0.6
+        },
+        {
+          "bin_label": "90\u2013100",
+          "n": 15,
+          "pred_b2s_mean": 15.65,
+          "actual_b2s_mean": 16.69,
+          "bias": -1.05
+        }
+      ],
+      "spearman_rho": 0.6247,
+      "spearman_p": 0.0,
+      "top25pct_hit_rate_at_zap75": 0.622,
+      "top25pct_base_rate": 0.252
+    },
+    "A4_permutation": {
+      "real_loyo_r2": 0.4253,
+      "perm_mean": -0.0357,
+      "perm_std": 0.0245,
+      "perm_max": 0.0349,
+      "p_value": 0.0,
+      "signal_confirmed": true
+    },
+    "A5_decomposition": {
+      "capital_only_loyo_r2": 0.4216,
+      "phase1_loyo_r2": 0.2463,
+      "full_model_loyo_r2": 0.4253,
+      "capital_features": [
+        "log_draft_capital",
+        "position_rank",
+        "breakout_score_x_capital",
+        "college_fpg_x_capital",
+        "yprr_x_capital",
+        "deep_target_x_capital",
+        "man_delta_x_capital"
+      ],
+      "phase1_features": [
+        "best_total_yards_rate",
+        "best_breakout_score",
+        "best_rec_rate",
+        "best_dominator",
+        "best_usage_pass",
+        "college_fantasy_ppg",
+        "best_rush_ypc",
+        "best_age",
+        "early_declare",
+        "power4_conf",
+        "recruit_rating",
+        "best_yprr",
+        "best_zone_yprr",
+        "best_receiving_grade",
+        "best_routes_per_game",
+        "speed_score",
+        "agility_score",
+        "weight_lbs"
+      ],
+      "incremental_over_cap": 0.0037,
+      "incremental_over_nocap": 0.179
+    }
+  },
+  "TE": {
+    "full_features": [
+      "overall_pick",
+      "breakout_score_x_capital",
+      "consensus_rank",
+      "weight_lbs",
+      "forty_time",
+      "broad_jump",
+      "slot_rate_x_capital"
+    ],
+    "A1_bootstrap": [
+      {
+        "feature": "consensus_rank",
+        "freq": 0.95,
+        "count": 950
+      },
+      {
+        "feature": "overall_pick",
+        "freq": 0.906,
+        "count": 906
+      },
+      {
+        "feature": "weight_lbs",
+        "freq": 0.66,
+        "count": 660
+      },
+      {
+        "feature": "best_zone_yprr",
+        "freq": 0.653,
+        "count": 653
+      },
+      {
+        "feature": "best_ppa_pass",
+        "freq": 0.65,
+        "count": 650
+      },
+      {
+        "feature": "best_slot_target_rate",
+        "freq": 0.637,
+        "count": 637
+      },
+      {
+        "feature": "best_routes_per_game",
+        "freq": 0.586,
+        "count": 586
+      },
+      {
+        "feature": "broad_jump",
+        "freq": 0.585,
+        "count": 585
+      },
+      {
+        "feature": "agility_score",
+        "freq": 0.561,
+        "count": 561
+      },
+      {
+        "feature": "breakout_score_x_capital",
+        "freq": 0.543,
+        "count": 543
+      },
+      {
+        "feature": "forty_time",
+        "freq": 0.522,
+        "count": 522
+      },
+      {
+        "feature": "best_age",
+        "freq": 0.511,
+        "count": 511
+      },
+      {
+        "feature": "slot_rate_x_capital",
+        "freq": 0.491,
+        "count": 491
+      },
+      {
+        "feature": "best_rec_td_pct",
+        "freq": 0.487,
+        "count": 487
+      },
+      {
+        "feature": "best_receiving_grade",
+        "freq": 0.437,
+        "count": 437
+      },
+      {
+        "feature": "best_slot_yprr",
+        "freq": 0.389,
+        "count": 389
+      },
+      {
+        "feature": "career_rec_per_target",
+        "freq": 0.372,
+        "count": 372
+      },
+      {
+        "feature": "power4_conf",
+        "freq": 0.367,
+        "count": 367
+      },
+      {
+        "feature": "best_behind_los_rate",
+        "freq": 0.359,
+        "count": 359
+      },
+      {
+        "feature": "speed_score",
+        "freq": 0.339,
+        "count": 339
+      },
+      {
+        "feature": "early_declare",
+        "freq": 0.336,
+        "count": 336
+      },
+      {
+        "feature": "best_deep_yprr",
+        "freq": 0.319,
+        "count": 319
+      },
+      {
+        "feature": "best_breakout_score",
+        "freq": 0.313,
+        "count": 313
+      },
+      {
+        "feature": "recruit_rating",
+        "freq": 0.308,
+        "count": 308
+      },
+      {
+        "feature": "best_man_yprr",
+        "freq": 0.308,
+        "count": 308
+      },
+      {
+        "feature": "best_man_zone_delta",
+        "freq": 0.284,
+        "count": 284
+      },
+      {
+        "feature": "teammate_score",
+        "freq": 0.278,
+        "count": 278
+      },
+      {
+        "feature": "best_screen_rate",
+        "freq": 0.278,
+        "count": 278
+      },
+      {
+        "feature": "best_deep_target_rate",
+        "freq": 0.275,
+        "count": 275
+      },
+      {
+        "feature": "capital_x_dominator",
+        "freq": 0.252,
+        "count": 252
+      },
+      {
+        "feature": "vertical_jump",
+        "freq": 0.247,
+        "count": 247
+      },
+      {
+        "feature": "draft_tier",
+        "freq": 0.233,
+        "count": 233
+      },
+      {
+        "feature": "yprr_x_capital",
+        "freq": 0.185,
+        "count": 185
+      },
+      {
+        "feature": "deep_target_x_capital",
+        "freq": 0.178,
+        "count": 178
+      },
+      {
+        "feature": "man_delta_x_capital",
+        "freq": 0.159,
+        "count": 159
+      },
+      {
+        "feature": "best_reception_share",
+        "freq": 0.158,
+        "count": 158
+      },
+      {
+        "feature": "deep_yprr_x_capital",
+        "freq": 0.118,
+        "count": 118
+      },
+      {
+        "feature": "combined_ath",
+        "freq": 0.114,
+        "count": 114
+      },
+      {
+        "feature": "college_fantasy_ppg",
+        "freq": 0.081,
+        "count": 81
+      },
+      {
+        "feature": "breakout_score_x_dominator",
+        "freq": 0.077,
+        "count": 77
+      },
+      {
+        "feature": "log_draft_capital",
+        "freq": 0.061,
+        "count": 61
+      },
+      {
+        "feature": "best_dominator",
+        "freq": 0.058,
+        "count": 58
+      },
+      {
+        "feature": "best_yprr",
+        "freq": 0.053,
+        "count": 53
+      },
+      {
+        "feature": "capital_x_age",
+        "freq": 0.048,
+        "count": 48
+      },
+      {
+        "feature": "best_rec_rate",
+        "freq": 0.032,
+        "count": 32
+      },
+      {
+        "feature": "draft_capital_score",
+        "freq": 0.022,
+        "count": 22
+      }
+    ],
+    "A2_knockout": [
+      {
+        "feature": "consensus_rank",
+        "loyo_r2": 0.3846758531080512,
+        "delta": -0.026543909259394316
+      },
+      {
+        "feature": "overall_pick",
+        "loyo_r2": 0.38478118586239685,
+        "delta": -0.02643857650504866
+      },
+      {
+        "feature": "breakout_score_x_capital",
+        "loyo_r2": 0.3984778828973152,
+        "delta": -0.01274187947013028
+      },
+      {
+        "feature": "forty_time",
+        "loyo_r2": 0.40832552421866763,
+        "delta": -0.0028942381487778723
+      },
+      {
+        "feature": "BASELINE",
+        "loyo_r2": 0.4112197623674455,
+        "delta": 0.0
+      },
+      {
+        "feature": "broad_jump",
+        "loyo_r2": 0.41517634982026286,
+        "delta": 0.003956587452817351
+      },
+      {
+        "feature": "weight_lbs",
+        "loyo_r2": 0.41533041207007726,
+        "delta": 0.004110649702631752
+      },
+      {
+        "feature": "slot_rate_x_capital",
+        "loyo_r2": 0.416644532960743,
+        "delta": 0.00542477059329749
+      }
+    ],
+    "A3_calibration": {
+      "bins": [
+        {
+          "bin_label": "0\u201310",
+          "n": 12,
+          "pred_b2s_mean": 1.67,
+          "actual_b2s_mean": 1.33,
+          "bias": 0.34
+        },
+        {
+          "bin_label": "10\u201320",
+          "n": 8,
+          "pred_b2s_mean": 2.59,
+          "actual_b2s_mean": 2.3,
+          "bias": 0.29
+        },
+        {
+          "bin_label": "20\u201330",
+          "n": 10,
+          "pred_b2s_mean": 3.5,
+          "actual_b2s_mean": 3.06,
+          "bias": 0.44
+        },
+        {
+          "bin_label": "30\u201340",
+          "n": 8,
+          "pred_b2s_mean": 4.17,
+          "actual_b2s_mean": 4.54,
+          "bias": -0.37
+        },
+        {
+          "bin_label": "40\u201350",
+          "n": 11,
+          "pred_b2s_mean": 4.76,
+          "actual_b2s_mean": 5.18,
+          "bias": -0.42
+        },
+        {
+          "bin_label": "50\u201360",
+          "n": 13,
+          "pred_b2s_mean": 5.27,
+          "actual_b2s_mean": 5.95,
+          "bias": -0.69
+        },
+        {
+          "bin_label": "60\u201370",
+          "n": 6,
+          "pred_b2s_mean": 5.88,
+          "actual_b2s_mean": 5.97,
+          "bias": -0.09
+        },
+        {
+          "bin_label": "70\u201380",
+          "n": 10,
+          "pred_b2s_mean": 6.49,
+          "actual_b2s_mean": 5.79,
+          "bias": 0.7
+        },
+        {
+          "bin_label": "80\u201390",
+          "n": 9,
+          "pred_b2s_mean": 7.79,
+          "actual_b2s_mean": 7.74,
+          "bias": 0.05
+        },
+        {
+          "bin_label": "90\u2013100",
+          "n": 10,
+          "pred_b2s_mean": 10.43,
+          "actual_b2s_mean": 11.29,
+          "bias": -0.87
+        }
+      ],
+      "spearman_rho": 0.6296,
+      "spearman_p": 0.0,
+      "top25pct_hit_rate_at_zap75": 0.652,
+      "top25pct_base_rate": 0.258
+    },
+    "A4_permutation": {
+      "real_loyo_r2": 0.4112,
+      "perm_mean": -0.0409,
+      "perm_std": 0.0308,
+      "perm_max": 0.0219,
+      "p_value": 0.0,
+      "signal_confirmed": true
+    },
+    "A5_decomposition": {
+      "capital_only_loyo_r2": 0.405,
+      "phase1_loyo_r2": 0.2853,
+      "full_model_loyo_r2": 0.4112,
+      "capital_features": [
+        "draft_round",
+        "overall_pick",
+        "draft_premium",
+        "position_rank",
+        "total_yards_rate_x_capital",
+        "slot_rate_x_capital"
+      ],
+      "phase1_features": [
+        "best_breakout_score",
+        "best_slot_yprr",
+        "forty_time",
+        "broad_jump",
+        "agility_score"
+      ],
+      "incremental_over_cap": 0.0063,
+      "incremental_over_nocap": 0.1259
+    }
+  }
+}
