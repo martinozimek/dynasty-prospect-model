@@ -1,9 +1,9 @@
-# Critical Feedback: ZAP Score Dynasty Prospect Model (v1.0)
+# Critical Feedback: ORBIT Score Dynasty Prospect Model (v1.0)
 **Reviewer:** Gemini (AI Model)
 **Date:** March 14, 2026
 
 ## 1. Executive Summary
-The ZAP Score framework is a statistically rigorous and professionally documented dynasty prospect model. Its "Two-Phase" approach (Phase I for production, Phase II for capital) is its greatest strength, as it effectively isolates the "Talent Signal" from "Market Consensus." The model avoids the common pitfall of "Draft Capital Blindness" by quantifying the risk of players who are overdrafted relative to their production.
+The ORBIT Score framework is a statistically rigorous and professionally documented dynasty prospect model. Its "Two-Phase" approach (Phase I for production, Phase II for capital) is its greatest strength, as it effectively isolates the "Talent Signal" from "Market Consensus." The model avoids the common pitfall of "Draft Capital Blindness" by quantifying the risk of players who are overdrafted relative to their production.
 
 ## 2. Soundness of Methodology
 * **Target Metric (B2S):** Using "Best 2 of First 3 Seasons" is an excellent choice. It rewards players who breakout in Year 2 or 3 (like Nico Collins or Chris Godwin) while filtering out one-year flukes or late-career decline.
@@ -23,9 +23,9 @@ The ZAP Score framework is a statistically rigorous and professionally documente
 * **Week 18 Noise:** Including Week 18 stats in the NFL target variable introduces "garbage time" data where starters sit. Excluding Week 18 would likely increase the model's correlation with true fantasy performance.
 
 ## 5. Strategic Recommendations
-* **Quantile Regression:** Instead of a single ZAP Score (e.g., 85), provide a range. This would quantify the "bust risk"—knowing that a TE has a ZAP 85 but a massive standard deviation is vital for risk management.
+* **Quantile Regression:** Instead of a single ORBIT Score (e.g., 85), provide a range. This would quantify the "bust risk"—knowing that a TE has an ORBIT 85 but a massive standard deviation is vital for risk management.
 * **Transfer Portal Features:** Add a binary flag for `has_transferred` or a `transfer_count` to the Phase I feature pool to see if it improves R².
 * **Capital Delta ($\Delta_{cap}$):** This is your most actionable output. Managers should use this to avoid "Landmines"—high-capital players whose Phase I score suggests they were drafted on traits that don't translate to fantasy points (e.g., blocking ability or raw speed).
 
 ---
-**Final Thoughts:** The ZAP Score is a high-level tool that avoids the most common mistakes in dynasty modeling. The documentation is exhaustive and the methodology is transparent. With minor refinements to age calculation and a focus on uncertainty, it is a premier predictive framework.
+**Final Thoughts:** The ORBIT Score is a high-level tool that avoids the most common mistakes in dynasty modeling. The documentation is exhaustive and the methodology is transparent. With minor refinements to age calculation and a focus on uncertainty, it is a premier predictive framework.

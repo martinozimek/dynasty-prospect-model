@@ -37,7 +37,6 @@ Usage:
     python scripts/fit_model.py --all
     python scripts/fit_model.py --position WR
     python scripts/fit_model.py --position WR --no-lgbm      # Ridge only
-    python scripts/fit_model.py --all --target top_season_ppg
     python scripts/fit_model.py --all --start-year 2011      # override 2014 default
     python scripts/fit_model.py --all --no-capital           # Phase I: no-capital model
 """
@@ -53,6 +52,7 @@ import joblib
 import numpy as np
 import pandas as pd
 from lightgbm import LGBMRegressor
+from scipy.stats import spearmanr
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LassoCV, Ridge, RidgeCV
 from sklearn.metrics import mean_absolute_error, r2_score
@@ -136,6 +136,16 @@ _CANDIDATE_FEATURES = {
         # Capital interactions
         "capital_x_age",
         "total_yards_rate_x_capital",
+        # Phase C new features (all cleared ≥+0.005 LOYO threshold)
+        "log_pick_capital",           # JJ-style curve +0.068
+        "pick_capital_x_age",
+        "total_yards_rate_x_pick_capital",
+        "teammate_score_x_capital",   # interaction +0.057
+        "best_breakout_score",        # +0.055
+        "blended_capital_rb",         # 83/17 actual+consensus blend
+        "log_blended_capital",
+        # Phase D: total plays denominator variant
+        "best_total_yards_rate_v2",
         # Pre-draft market
         "consensus_rank", "position_rank",
         # College production — total contribution (JJ's adjusted yards per team play)
@@ -309,6 +319,11 @@ _MONOTONE_DIRECTIONS = {
     "best_breakout_score": 1,
     "breakout_score_x_capital": 1, "breakout_score_x_dominator": 1,
     "best_total_yards_rate": 1,    "total_yards_rate_x_capital": 1,
+    "best_total_yards_rate_v2": 1,
+    "log_pick_capital": 1,         "pick_capital_x_age": 1,
+    "total_yards_rate_x_pick_capital": 1,
+    "teammate_score_x_capital": 1,
+    "blended_capital_rb": 1,       "log_blended_capital": 1,
     "combined_ath_x_capital": 1,
     "overall_pick": -1,       "draft_round": -1,
     "consensus_rank": -1,     "position_rank": -1,
@@ -485,7 +500,9 @@ def _loyo_cv(
 
     if not all_actual:
         return {"year_results": year_results, "r2": float("nan"),
-                "mae": float("nan"), "rmse": float("nan")}
+                "mae": float("nan"), "rmse": float("nan"),
+                "abs_residuals": [], "spearman_rho": float("nan"),
+                "top25_hit_rate": float("nan")}
 
     all_actual    = np.array(all_actual)
     all_predicted = np.array(all_predicted)
@@ -493,7 +510,23 @@ def _loyo_cv(
     agg_mae  = float(mean_absolute_error(all_actual, all_predicted))
     agg_rmse = float(np.sqrt(np.mean((all_actual - all_predicted) ** 2)))
 
-    return {"year_results": year_results, "r2": agg_r2, "mae": agg_mae, "rmse": agg_rmse}
+    # D1: conformal interval residuals
+    abs_residuals = np.abs(all_actual - all_predicted).tolist()
+
+    # D3: rank-order calibration metrics
+    rho, _ = spearmanr(all_predicted, all_actual)
+    q75_actual = np.quantile(all_actual, 0.75)
+    q75_pred   = np.quantile(all_predicted, 0.75)
+    top25_mask = all_actual >= q75_actual
+    top25_hit_rate = float(np.mean(all_predicted[top25_mask] >= q75_pred)) if top25_mask.any() else float("nan")
+
+    return {
+        "year_results": year_results,
+        "r2": agg_r2, "mae": agg_mae, "rmse": agg_rmse,
+        "abs_residuals": [round(float(v), 4) for v in abs_residuals],
+        "spearman_rho": round(float(rho), 4),
+        "top25_hit_rate": round(top25_hit_rate, 4),
+    }
 
 
 def _rolling_cv(
@@ -863,8 +896,13 @@ def fit_position(
         "ridge_top_features": [
             {"feature": f, "coef": float(c)} for f, c in coef_table[:15]
         ],
-        # Training predictions — ZAP score reference (percentile vs this distribution)
+        # Training predictions — ORBIT score reference (percentile vs this distribution)
         "train_preds": [round(float(p), 4) for p in train_preds_arr],
+        # D1: conformal prediction interval residuals from LOYO-CV
+        "loyo_abs_residuals": cv_ridge.get("abs_residuals", []),
+        # D3: rank-order calibration metrics
+        "loyo_spearman_rho":   cv_ridge.get("spearman_rho", float("nan")),
+        "loyo_top25_hit_rate": cv_ridge.get("top25_hit_rate", float("nan")),
     }
 
 
@@ -876,7 +914,7 @@ def main() -> None:
     parser.add_argument("--all", action="store_true", help="Train all positions.")
     parser.add_argument(
         "--target", default="b2s_score",
-        choices=["b2s_score", "top_season_ppg", "year1_ppg"],
+        choices=["b2s_score", "year1_ppg"],
         help="Training target (default: b2s_score)",
     )
     parser.add_argument(

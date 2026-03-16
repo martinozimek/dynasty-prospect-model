@@ -15,8 +15,8 @@ dynasty-prospect-model  ← you are here
 
 An independent regression model that predicts a college prospect's **B2S score**
 (Best Two Seasons — avg PPR PPG of top-2 seasons in first 3 NFL years) from
-pre-draft college and combine data. Not a ZAP reproduction — we fit our own
-coefficients to actual B2S outcomes.
+pre-draft college and combine data. The score is called **ORBIT** — an independent model,
+not a reproduction of JJ Zachariason's ZAP. We fit our own coefficients to actual B2S outcomes.
 
 ---
 

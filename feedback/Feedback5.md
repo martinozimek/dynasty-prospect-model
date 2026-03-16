@@ -152,7 +152,7 @@ primary model.
 
 ## Motivation
 
-The current system produces a percentile score (ZAP) and a predicted B2S
+The current system produces a percentile score (ORBIT) and a predicted B2S
 value but provides no uncertainty estimate.
 
 Conformal prediction provides **distribution‑free prediction intervals**
@@ -175,7 +175,7 @@ Conformal prediction intervals will:
 1.  produce calibrated uncertainty bounds around predicted B2S
 2.  reveal when the model is extrapolating beyond the training
     distribution
-3.  improve interpretability of ZAP scores
+3.  improve interpretability of ORBIT scores
 
 ------------------------------------------------------------------------
 
@@ -240,15 +240,15 @@ ranges
 
 ------------------------------------------------------------------------
 
-### Step 5 --- Integrate with ZAP Score
+### Step 5 --- Integrate with ORBIT Score
 
-Translate prediction intervals into ZAP uncertainty.
+Translate prediction intervals into ORBIT uncertainty.
 
 Example output:
 
 Prospect A
 
-ZAP: 84\
+ORBIT: 84\
 Predicted B2S: 13.2 PPG\
 80% interval: \[8.5, 16.1\]
 

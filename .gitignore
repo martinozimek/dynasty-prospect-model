@@ -18,6 +18,12 @@ models/*
 output/reports/*.pdf
 output/scores/*.csv
 
+# Generated dashboard HTML (large artifact — regenerate via scripts/export_dashboard.py)
+dashboard/*.html
+
+# Raw database file (lives in cfb-prospect-db repo)
+ff.db
+
 # Jupyter checkpoints
 .ipynb_checkpoints/
 *.ipynb_checkpoints

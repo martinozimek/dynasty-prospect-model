@@ -256,13 +256,13 @@ for pos in ['WR', 'RB', 'TE']:
           f"Selection bias={selection_bias:+.3f}")
 
 # ============================================================
-# SECTION 7: ZAP reference distribution bias
+# SECTION 7: ORBIT reference distribution bias
 # ============================================================
 print()
 print("=" * 70)
-print("SECTION 7: ZAP Reference Distribution (In-Sample Bias)")
+print("SECTION 7: ORBIT Reference Distribution (In-Sample Bias)")
 print("=" * 70)
-print("  ZAP uses in-sample Ridge training predictions as the percentile reference.")
+print("  ORBIT uses in-sample Ridge training predictions as the percentile reference.")
 print("  Ridge training predictions are optimistically biased vs. true holdout preds.")
 print()
 for pos in ['WR', 'RB', 'TE']:

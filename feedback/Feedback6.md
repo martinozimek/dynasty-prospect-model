@@ -211,16 +211,16 @@ High correlation with snap share indicates the model predicts
 
 # 6. Calibration and Reliability Tests
 
-## 6.1 ZAP Calibration Curve
+## 6.1 ORBIT Calibration Curve
 
 Procedure:
 
-1.  Group prospects by predicted ZAP decile.
+1.  Group prospects by predicted ORBIT decile.
 2.  Compute actual B2S averages for each group.
 
 Output:
 
-  ZAP Bin   Predicted Mean   Actual Mean
+  ORBIT Bin   Predicted Mean   Actual Mean
   --------- ---------------- -------------
   90--100   14.8             11.3
   80--90    13.6             12.5
