@@ -3,7 +3,7 @@ Analytical charts for dynasty prospect evaluation.
 
 Charts produced:
   1. Draft Capital vs B2S calibration (3-panel)
-  2. ZAP Value Map — 2026 class: capital vs model surplus
+  2. ORBIT Value Map — 2026 class: capital vs model surplus
   3. Breakout Age vs B2S scatter (WR + 2026 overlaid)
   4. Career trajectory by outcome tier (hits / developing / misses)
   5. 2026 class depth vs historical classes (violin + box)
@@ -115,24 +115,24 @@ def chart_capital_vs_b2s():
 
 
 # ---------------------------------------------------------------------------
-# 2. ZAP Value Map — 2026 class
+# 2. ORBIT Value Map — 2026 class
 # ---------------------------------------------------------------------------
 
-def chart_zap_value_map():
+def chart_orbit_value_map():
     s26 = pd.read_csv(REPO_ROOT / "output" / "scores" / "scores_2026_ridge.csv")
-    s26 = s26[s26["zap_score"] > 0].copy()
+    s26 = s26[s26["orbit_score"] > 0].copy()
 
-    # We want ZAP vs position_rank; over/under the OLS trendline = value/overpriced
+    # We want ORBIT vs position_rank; over/under the OLS trendline = value/overpriced
     fig, ax = plt.subplots(figsize=(11, 7))
     fig.patch.set_facecolor(BG)
 
-    # Fit line across all positions: ZAP ~ position_rank
-    valid = s26.dropna(subset=["position_rank", "zap_score"])
+    # Fit line across all positions: ORBIT ~ position_rank
+    valid = s26.dropna(subset=["position_rank", "orbit_score"])
     x_fit = valid["position_rank"].values
-    y_fit = valid["zap_score"].values
+    y_fit = valid["orbit_score"].values
     m, b = np.polyfit(x_fit, y_fit, 1)
     xr = np.linspace(x_fit.min(), x_fit.max(), 200)
-    ax.plot(xr, m * xr + b, color=AXIS_C, lw=1.2, ls="--", alpha=0.6, zorder=2, label="Expected ZAP")
+    ax.plot(xr, m * xr + b, color=AXIS_C, lw=1.2, ls="--", alpha=0.6, zorder=2, label="Expected ORBIT")
 
     # Shade above/below
     ax.fill_between(xr, m * xr + b, (m * xr + b) + 30, alpha=0.05, color="#1b7837")
@@ -143,7 +143,7 @@ def chart_zap_value_map():
     for pos, grp in s26.groupby("position"):
         color = POS_COLORS.get(pos, "#555555")
         jy = rng.uniform(-0.8, 0.8, len(grp))
-        ax.scatter(grp["position_rank"], grp["zap_score"] + jy,
+        ax.scatter(grp["position_rank"], grp["orbit_score"] + jy,
                    color=color, s=28, alpha=0.75, linewidths=0.4,
                    edgecolors="white", zorder=4, label=pos)
 
@@ -153,7 +153,7 @@ def chart_zap_value_map():
         grp = grp.dropna(subset=["position_rank"])
         grp = grp.copy()
         grp["expected"] = m * grp["position_rank"] + b
-        grp["surplus"] = grp["zap_score"] - grp["expected"]
+        grp["surplus"] = grp["orbit_score"] - grp["expected"]
 
         # Top 4 surplus (value) + top 2 deficit (expensive) per position
         top_val = grp.nlargest(4, "surplus")
@@ -162,28 +162,28 @@ def chart_zap_value_map():
         for _, row in pd.concat([top_val, top_exp]).iterrows():
             ax.annotate(
                 row["player_name"],
-                xy=(row["position_rank"], row["zap_score"]),
+                xy=(row["position_rank"], row["orbit_score"]),
                 xytext=(5, 2), textcoords="offset points",
                 fontsize=7, color=color, fontweight="bold",
                 path_effects=[pe.withStroke(linewidth=1.8, foreground=BG)],
                 zorder=6,
             )
 
-    _style(ax, "2026 ZAP Value Map — Model vs. Draft Capital",
+    _style(ax, "2026 ORBIT Value Map — Model vs. Draft Capital",
            "Above trend = model upside relative to draft cost  |  Below trend = draft capital leads model signal")
     ax.set_xlabel("Position Rank (consensus draft board)", color=AXIS_C, fontsize=10)
-    ax.set_ylabel("ZAP Score (0–100)", color=AXIS_C, fontsize=10)
+    ax.set_ylabel("ORBIT Score (0–100)", color=AXIS_C, fontsize=10)
     ax.set_xlim(0, s26["position_rank"].max() * 1.05)
     ax.set_ylim(-5, 105)
 
     handles = [mpatches.Patch(color=POS_COLORS[p], label=p) for p in ["WR","RB","TE"]]
-    handles.append(plt.Line2D([0],[0], color=AXIS_C, ls="--", lw=1.2, label="Expected ZAP"))
+    handles.append(plt.Line2D([0],[0], color=AXIS_C, ls="--", lw=1.2, label="Expected ORBIT"))
     ax.legend(handles=handles, fontsize=9, framealpha=0.5, loc="upper right")
 
     fig.text(0.985, 0.015, "Data: CFBD / nflverse", ha="right", va="bottom",
              fontsize=7, color=SUB_C, style="italic")
     plt.tight_layout(pad=1.2)
-    save(fig, "ANALYSIS_02_zap_value_map.png")
+    save(fig, "ANALYSIS_02_orbit_value_map.png")
 
 
 # ---------------------------------------------------------------------------
@@ -225,14 +225,14 @@ def chart_breakout_age():
     # 2026 prospects as vertical dashed lines + label at top
     for _, row in s26_wr.iterrows():
         ax.axvline(row["breakout_age"], color="#2166ac", alpha=0.25, lw=0.8, zorder=2)
-        if row["zap_score"] >= 60:
+        if row["orbit_score"] >= 60:
             ax.text(row["breakout_age"] + 0.03, ax.get_ylim()[1] * 0.95 if ax.get_ylim()[1] > 0 else 20,
                     row["player_name"], fontsize=6.5, color="#2166ac",
                     rotation=90, va="top", ha="left",
                     path_effects=[pe.withStroke(linewidth=1.5, foreground=BG)])
 
     _style(ax, "Breakout Age vs. B2S Score — WR (2011–2022 Training)",
-           f"r = {r:.2f} | Earlier breakout → higher NFL ceiling  |  Blue lines = 2026 WR prospects (ZAP≥60)")
+           f"r = {r:.2f} | Earlier breakout → higher NFL ceiling  |  Blue lines = 2026 WR prospects (ORBIT≥60)")
     ax.set_xlabel("Breakout Age (age in best college season)", color=AXIS_C, fontsize=10)
     ax.set_ylabel("B2S Score (avg best 2 NFL seasons)", color=AXIS_C, fontsize=10)
     ax.set_xlim(17.5, 24.5)
@@ -492,7 +492,7 @@ if __name__ == "__main__":
 
     charts = {
         1: chart_capital_vs_b2s,
-        2: chart_zap_value_map,
+        2: chart_orbit_value_map,
         3: chart_breakout_age,
         4: chart_trajectory_tiers,
         5: chart_class_depth,

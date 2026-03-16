@@ -31,7 +31,7 @@ These are free information. Results inform all subsequent decisions.
 |---|------|--------|--------|---------|
 | A1 | Bootstrap Lasso stability (1000×) | scripts/stress_test.py | COMPLETE | All current model features ≥50% stable; RB `total_yards_rate_x_capital` borderline (24.4%) |
 | A2 | Feature knockout (one-at-a-time LOYO drop) | scripts/stress_test.py | COMPLETE | No single-feature dependency; several marginal features slightly negative for RB/TE |
-| A3 | ZAP calibration curve (predicted vs actual by decile) | scripts/stress_test.py | COMPLETE | Good rank-order signal (Spearman 0.60–0.63); no systematic top-decile overconfidence |
+| A3 | ORBIT calibration curve (predicted vs actual by decile) | scripts/stress_test.py | COMPLETE | Good rank-order signal (Spearman 0.60–0.63); no systematic top-decile overconfidence |
 | A4 | Label permutation test (shuffle B2S, expect R²≈0) | scripts/stress_test.py | COMPLETE | PASS — all 3 positions p=0.0, real signal confirmed, no leakage |
 | A5 | Capital decomposition (capital-only vs Phase I vs full) | scripts/stress_test.py | COMPLETE | RB nearly capital-only (+0.004 from non-capital); WR/TE get meaningful uplift from non-capital |
 
@@ -53,7 +53,7 @@ These are free information. Results inform all subsequent decisions.
 
 | # | Change | Condition to implement | Status |
 |---|--------|------------------------|--------|
-| C1 | Zero-fill B2S for non-qualifying players (survivorship fix) | Calibration curve (A3) shows systematic overconfidence at bottom ZAP deciles | NOT WARRANTED — A3 shows no systematic bottom-decile overconfidence for any position |
+| C1 | Zero-fill B2S for non-qualifying players (survivorship fix) | Calibration curve (A3) shows systematic overconfidence at bottom ORBIT deciles | NOT WARRANTED — A3 shows no systematic bottom-decile overconfidence for any position |
 | C2 | TE 5-year label window experiment | TE LOYO R² improves with 5-year window vs 3-year | DEFERRED — 2022 class TEs lack 5th season data until after 2026 NFL season; requires nfl-fantasy-db change |
 
 ---
@@ -62,7 +62,7 @@ These are free information. Results inform all subsequent decisions.
 
 | # | Change | Condition to implement | Status |
 |---|--------|------------------------|--------|
-| D1 | Conformal prediction intervals | Calibration test (A3) confirms ZAP-to-B2S mapping is reliable enough to anchor intervals | **COMPLETE** — 80%/90% intervals added to score_class.py output and CSV; residuals stored in metadata.json |
+| D1 | Conformal prediction intervals | Calibration test (A3) confirms ORBIT-to-B2S mapping is reliable enough to anchor intervals | **COMPLETE** — 80%/90% intervals added to score_class.py output and CSV; residuals stored in metadata.json |
 | D2 | Ensemble blend (Ridge + LGBM) | Ensemble LOYO R² > pure Ridge across all positions | REJECTED — Ridge beats all blends (0.5–0.8 weight) in all positions; condition not met |
 | D3 | Ranking metrics in output (Spearman, top-12 hit rate) | Always add — reporting improvement, not model change | **COMPLETE** — Spearman rho and top-25% hit rate added to score_class.py footer |
 | D4 | Bayesian Ridge for TE | Only if A1 shows severe TE coefficient instability AND D-equivalent Bayesian model improves LOYO R² | NOT WARRANTED — TE features all ≥49% stable; not severe instability |
@@ -72,7 +72,7 @@ These are free information. Results inform all subsequent decisions.
 ## Deprioritized (Do Not Pursue)
 
 - Landing spot / QB quality model — requires NFL data not available pre-draft
-- Draft class strength normalization — ZAP is already class-relative
+- Draft class strength normalization — ORBIT is already class-relative
 - Transfer portal flag — low signal in 2014–2022 window; direction ambiguous
 - Full Bayesian stack — excessive complexity; conformal intervals cover 80% of the benefit
 
@@ -159,10 +159,10 @@ TE — baseline LOYO R² = 0.4112:
     effects are tiny, no fundamental change warranted.
 ```
 
-### A3 — ZAP Calibration Curve (predicted vs actual B2S by decile)
+### A3 — ORBIT Calibration Curve (predicted vs actual B2S by decile)
 
 ```
-WR — Spearman rho=0.5988 (p≈0), top-25% hit rate at ZAP≥75: 54.7% (base rate 25%)
+WR — Spearman rho=0.5988 (p≈0), top-25% hit rate at ORBIT≥75: 54.7% (base rate 25%)
   Decile   N   PredB2S  ActualB2S  Bias
   0-10    23    2.24      2.82     -0.58
   10-20   25    3.31      2.44     +0.87
@@ -177,11 +177,11 @@ WR — Spearman rho=0.5988 (p≈0), top-25% hit rate at ZAP≥75: 54.7% (base ra
   → Top deciles well calibrated. Mid-low deciles noisy but not systematic
     overconfidence at the top. C1 survivorship fix NOT warranted.
 
-RB — Spearman rho=0.6247 (p≈0), top-25% hit rate at ZAP≥75: 62.2% (base rate 25.2%)
+RB — Spearman rho=0.6247 (p≈0), top-25% hit rate at ORBIT≥75: 62.2% (base rate 25.2%)
   Good calibration overall. Largest noise in bottom deciles (small N).
   No systematic top-decile overconfidence.
 
-TE — Spearman rho=0.6296 (p≈0), top-25% hit rate at ZAP≥75: 65.2% (base rate 25.8%)
+TE — Spearman rho=0.6296 (p≈0), top-25% hit rate at ORBIT≥75: 65.2% (base rate 25.8%)
   Best calibrated of 3 positions. Top decile slightly underestimates actual (bias -0.87
   at 90-100), which is conservative/safe.
   No systematic overconfidence at any decile.

@@ -17,7 +17,7 @@ by the findings. The one validated next step is Phase D1: conformal prediction i
 | A4 — Real signal confirmed | ✓ PASS | ✓ PASS | ✓ PASS | **Model is detecting genuine signal in all positions** |
 | A1 — Feature stability | ✓ Stable | ⚠ One borderline | ✓ Stable | Minor flag on RB `total_yards_rate_x_capital` |
 | A2 — No catastrophic dependency | ✓ | ✓ | ✓ | No single-feature collapse in any position |
-| A3 — ZAP calibration adequate | ✓ | ✓ | ✓ | Spearman 0.60–0.63; no top-decile overconfidence |
+| A3 — ORBIT calibration adequate | ✓ | ✓ | ✓ | Spearman 0.60–0.63; no top-decile overconfidence |
 | A5 — Capital decomposition | Informative | Informative | Informative | RB/TE are capital-driven; WR has meaningful non-capital signal |
 
 **Bottom line:** The model is stable, real, and calibrated. The findings validate the
@@ -166,15 +166,15 @@ load-bearing features; positive deltas reveal features that may be adding noise.
 
 ---
 
-## A3 — ZAP Calibration Curve
+## A3 — ORBIT Calibration Curve
 
-**Purpose:** Verify that ZAP rank order corresponds to actual B2S outcomes. Test for
+**Purpose:** Verify that ORBIT rank order corresponds to actual B2S outcomes. Test for
 systematic overconfidence (predicted > actual) at top deciles, which would indicate
 label survivorship bias inflating scores at the top.
 
 ### WR — Spearman rho = 0.5988 (p ≈ 0)
 
-| ZAP Decile | N | Pred B2S | Actual B2S | Bias |
+| ORBIT Decile | N | Pred B2S | Actual B2S | Bias |
 |------------|---|----------|------------|------|
 | 0–10 | 23 | 2.24 | 2.82 | −0.58 |
 | 10–20 | 25 | 3.31 | 2.44 | +0.87 |
@@ -187,7 +187,7 @@ label survivorship bias inflating scores at the top.
 | 80–90 | 24 | 10.19 | 10.07 | +0.12 |
 | 90–100 | 22 | 12.41 | 12.32 | **+0.08** |
 
-Top-25% hit rate at ZAP ≥ 75: **54.7%** vs base rate 25%.
+Top-25% hit rate at ORBIT ≥ 75: **54.7%** vs base rate 25%.
 
 **Interpretation:** The 30–40 decile is the noisiest (bias +1.46) — this is the band
 of mid-round WRs who are drafted with modest capital but don't always justify it.
@@ -197,17 +197,17 @@ correction is not warranted.
 
 ### RB — Spearman rho = 0.6247 (p ≈ 0)
 
-Top-25% hit rate at ZAP ≥ 75: **62.2%** vs base rate 25.2%. Strong calibration across
+Top-25% hit rate at ORBIT ≥ 75: **62.2%** vs base rate 25.2%. Strong calibration across
 most deciles. Noisiest at bottom deciles (small N). No systematic top-decile pattern.
 
 ### TE — Spearman rho = 0.6296 (p ≈ 0)
 
-Top-25% hit rate at ZAP ≥ 75: **65.2%** vs base rate 25.8%. Best calibrated of the
+Top-25% hit rate at ORBIT ≥ 75: **65.2%** vs base rate 25.8%. Best calibrated of the
 three positions. Top decile slightly underestimates actual (bias −0.87 at 90–100),
 which is conservative — a safer failure mode than overconfidence.
 
 **Overall conclusion:** All three positions show rank-order signal 2.2–2.6× the base
-rate. D1 (conformal intervals) condition is confirmed met: the ZAP-to-B2S mapping is
+rate. D1 (conformal intervals) condition is confirmed met: the ORBIT-to-B2S mapping is
 reliable enough to anchor prediction intervals.
 
 ---
@@ -265,8 +265,8 @@ interaction with capital, not a standalone production signal.
 These results validate the Phase I no-capital model as a risk-flagging tool rather than
 a predictive competitor to the full model. The Phase I model (no capital) achieves
 R² of 0.21–0.29 across positions — meaningful but substantially below the full model.
-This supports the design intent: Phase I score is not meant to replace ZAP but to
-expose cases where ZAP is largely driven by capital rather than independent college
+This supports the design intent: Phase I score is not meant to replace ORBIT but to
+expose cases where ORBIT is largely driven by capital rather than independent college
 evidence.
 
 ---
@@ -337,12 +337,12 @@ Add interval width as a signal of model confidence: wide intervals = high uncert
 **D3 — Ranking Metrics in Output**
 
 Add to `score_class.py` printed output:
-- Spearman rho of ZAP vs actual B2S (training set, LOYO predictions)
-- Top-25% hit rate at ZAP ≥ 75 (already computed in A3; include in standard output)
+- Spearman rho of ORBIT vs actual B2S (training set, LOYO predictions)
+- Top-25% hit rate at ORBIT ≥ 75 (already computed in A3; include in standard output)
 - Per-position calibration note
 
 Both D1 and D3 are reporting improvements only. They do not alter model coefficients,
-feature selection, or ZAP scores.
+feature selection, or ORBIT scores.
 
 ---
 

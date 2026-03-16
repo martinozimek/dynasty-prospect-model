@@ -11,7 +11,6 @@ Usage:
     python scripts/analyze.py --position WR                 # WR only
     python scripts/analyze.py --start-year 2015             # recent era
     python scripts/analyze.py --end-year 2019               # older era
-    python scripts/analyze.py --target top_season_ppg       # peak PPG target
     python scripts/analyze.py --hit-threshold 9.0           # binary hit analysis
     python scripts/analyze.py --output output/reports/x.pdf
 """
@@ -72,18 +71,18 @@ log = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 _POSITIONS = ("WR", "RB", "TE")
-_TARGETS = ("b2s_score", "top_season_ppg", "year1_ppg", "year2_ppg", "year3_ppg")
+_TARGETS = ("b2s_score", "year1_ppg", "year2_ppg", "year3_ppg")
 _DEFAULT_TARGET = "b2s_score"
 
 _NON_FEATURES = {
     "nfl_name", "cfb_name", "cfb_player_id", "position",
-    "draft_year", "match_score", "b2s_score", "top_season_ppg",
+    "draft_year", "match_score", "b2s_score",
     "year1_ppg", "year2_ppg", "year3_ppg", "qualifying_nfl_seasons",
     "best_team", "recruit_year", "best_season_year",
 }
 
 _BASE_FEATURES = [
-    # Core ZAP metrics
+    # Core ORBIT metrics
     "best_rec_rate", "best_dominator", "best_reception_share",
     "best_age", "best_breakout_score", "best_total_yards_rate",
     "best_games", "best_sp_plus",
@@ -144,14 +143,14 @@ _JJ_CLAIMS = {
     "draft_capital_score":   "Strongest single predictor of NFL success",
     "speed_score":           "Most predictive for RBs; (wt*200)/40^4",
     "career_rec_per_target": "YPRR proxy; yards per target career",
-    "best_rec_rate":         "Rec yds / team pass att — ZAP rec rate",
+    "best_rec_rate":         "Rec yds / team pass att — ORBIT rec rate",
     "recruit_rating":        "Elite recruits signal ceiling",
     "college_fantasy_ppg":   "PPR fantasy PPG in best college season",
 }
 
 _FEATURE_LABELS = {
-    # Core ZAP
-    "best_rec_rate":              "Rec Rate (yd/team_att) — ZAP",
+    # Core ORBIT
+    "best_rec_rate":              "Rec Rate (yd/team_att) — ORBIT",
     "best_dominator":             "Dominator Rating (rec_yd%+rec_td%)/2",
     "best_reception_share":       "Reception Share",
     "best_age":                   "Age at Best College Season",
@@ -334,7 +333,7 @@ def load_training(
 def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     """Add derived/interaction features as new columns."""
     df = df.copy()
-    # Core ZAP interaction terms
+    # Core ORBIT interaction terms
     df["dominator_x_rate"]    = df["best_dominator"] * df["best_rec_rate"]
     df["age_x_dominator"]     = df["best_age"] * df["best_dominator"]
     df["capital_x_dominator"] = df["draft_capital_score"] * df["best_dominator"]
@@ -344,6 +343,26 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     df["log_rec_rate"]        = np.log(df["best_rec_rate"].clip(lower=0.001))
     df["log_dominator"]       = np.log(df["best_dominator"].clip(lower=0.001))
     df["log_draft_capital"]   = np.log(df["draft_capital_score"].clip(lower=0.1) + 1)
+    # JJ-style pick capital: log(1000 / (pick + 1)) — Phase C RB +0.068 LOYO delta
+    if "overall_pick" in df.columns:
+        df["log_pick_capital"] = np.log(1000.0 / (df["overall_pick"].clip(lower=1) + 1))
+        if "best_age" in df.columns:
+            df["pick_capital_x_age"] = df["log_pick_capital"] * df["best_age"]
+        if "best_total_yards_rate" in df.columns:
+            df["total_yards_rate_x_pick_capital"] = (
+                df["best_total_yards_rate"] * df["log_pick_capital"]
+            )
+    # 83/17 blended capital: actual pick + consensus rank projection (JJ RB-specific)
+    if "draft_capital_score" in df.columns and "consensus_rank" in df.columns:
+        _consensus_cap = 100.0 * np.exp(
+            -0.023 * (df["consensus_rank"].clip(lower=1) - 1)
+        )
+        df["blended_capital_rb"] = (
+            0.83 * df["draft_capital_score"] + 0.17 * _consensus_cap
+        )
+        df["log_blended_capital"] = np.log(
+            df["blended_capital_rb"].clip(lower=0.1) + 1
+        )
     # Polynomial
     df["rec_rate_sq"]         = df["best_rec_rate"] ** 2
     df["dominator_sq"]        = df["best_dominator"] ** 2
@@ -372,6 +391,9 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     # Total yards rate interaction (RB primary — JJ's adjusted yards per team play)
     if "best_total_yards_rate" in df.columns:
         df["total_yards_rate_x_capital"] = df["best_total_yards_rate"] * df["log_draft_capital"]
+    # teammate_score × capital interaction (Phase C: +0.057 LOYO delta for RB)
+    if "teammate_score" in df.columns:
+        df["teammate_score_x_capital"] = df["teammate_score"] * df["log_draft_capital"]
     # College fantasy PPG interaction
     if "college_fantasy_ppg" in df.columns:
         df["college_fpg_x_capital"] = df["college_fantasy_ppg"] * df["draft_capital_score"]

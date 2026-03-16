@@ -5,7 +5,7 @@ shortcut made in building this model. Written so that an independent reviewer �
 methodology without needing to read the source code.
 
 **What this model does:** Predicts how productive a skill-position NFL draft prospect (WR, RB, TE) will be
-in dynasty fantasy football, expressed as a percentile score (0–100) called the ZAP Score. It also computes
+in dynasty fantasy football, expressed as a percentile score (0–100) called the ORBIT Score. It also computes
 a "Phase I" score that strips out all draft capital signal, and a capital delta risk flag.
 
 ---
@@ -23,7 +23,7 @@ a "Phase I" score that strips out all draft capital signal, and a capital delta 
 9. [Model Architecture: Capital Model](#9-model-architecture-capital-model)
 10. [Model Architecture: Phase I (No-Capital) Model](#10-model-architecture-phase-i-no-capital-model)
 11. [Cross-Validation Strategy](#11-cross-validation-strategy)
-12. [ZAP Score Construction](#12-zap-score-construction)
+12. [ORBIT Score Construction](#12-orbit-score-construction)
 13. [Capital Delta and Risk Classification](#13-capital-delta-and-risk-classification)
 14. [Scoring Future Draft Classes (Inference)](#14-scoring-future-draft-classes-inference)
 15. [Known Limitations and Unresolved Assumptions](#15-known-limitations-and-unresolved-assumptions)
@@ -335,14 +335,22 @@ Formula from JJ Zachariason (Episode 1081, February 2026):
 total_yards_rate = (rec_yards + rush_yards) / team_pass_att × SOS_mult × age_mult
 ```
 
-**Important approximation:** The denominator uses `team_pass_att` rather than total team plays. Total
-team plays (pass + rush) are not stored in our database. This is a known imprecision: a run-heavy team
-might have 250 pass attempts but 600 total plays. Using only pass attempts as the denominator inflates
-the rate for players on run-heavy teams (where the denominator is small relative to total opportunity).
+**Important approximation:** The denominator uses `team_pass_att` rather than total team plays. On
+run-heavy teams (250 pass attempts, ~600 total plays), the denominator is ~2.4× smaller than the
+"correct" denominator, inflating total_yards_rate for players on those teams.
 
-**Assumption:** `team_pass_att` is an adequate proxy for team offensive context. This is defensible
-because JJ's stated denominator is "team pass attempts" (not total plays), and pass attempts correlate
-with modern offensive philosophy more cleanly than total plays.
+**Phase D experiment (2026-03-16): Total plays denominator tested.** `CFBTeamSeason.rush_attempts` was
+backfilled for all years 2007–2025 (2,414 rows) using the CFBD `/stats/season` API. A parallel metric
+`best_total_yards_rate_v2` was computed using `(pass_att + rush_att)` as the denominator (mean ratio
+v2/v1 = 0.42, std = 0.06 across the training set). Both features were added to the RB candidate pool.
+**Lasso did not select `best_total_yards_rate_v2`** — it preferred `total_yards_rate_x_pick_capital`
+(an interaction of `best_total_yards_rate` with `log_pick_capital`). **Result: pass_att denominator
+confirmed as adequate for the current model.** `best_total_yards_rate_v2` remains in the training CSV
+for future reference but is excluded from the candidate pool.
+
+**Assumption:** `team_pass_att` is an adequate proxy for team offensive context. This is now empirically
+supported — Lasso adjudicated between v1 (pass_att denominator) and v2 (total plays denominator) and
+preferred v1. JJ's stated denominator is also "team pass attempts."
 
 Same option-offense filter (min 200 team pass attempts) and age_mult as breakout score.
 
@@ -512,6 +520,26 @@ production evidence AND the physical traits they cannot observe from public data
 they are: (a) interpretable, (b) consistent with the "both signals together" hypothesis, and
 (c) well-handled by Ridge regression without overfitting.
 
+**Phase C interactions added 2026-03-16 (RB only):**
+```python
+# JJ-style pick capital encoding (Phase C: +0.068 LOYO delta for RB)
+log_pick_capital             = log(1000 / (overall_pick + 1))
+pick_capital_x_age           = log_pick_capital × best_age
+total_yards_rate_x_pick_capital = best_total_yards_rate × log_pick_capital
+
+# Teammate score × capital (Phase C: +0.057 LOYO delta for RB)
+teammate_score_x_capital     = teammate_score × log_draft_capital
+```
+
+`log_pick_capital` is a different capital encoding from `log_draft_capital`. `log_draft_capital` is
+`log(draft_capital_score + 1)` where capital_score = 100 × exp(−0.023 × (pick − 1)). `log_pick_capital`
+is `log(1000 / (pick + 1))` — a different functional form that JJ uses in his raw-pick ZAP formulation.
+Both are in the candidate pool; Lasso adjudicates which encoding (and which interactions) enter the final model.
+
+`teammate_score_x_capital` was engineered but **not selected by Lasso** in the Phase C refit. The
+standalone `teammate_score` was also not selected. The interaction's univariate delta (+0.057) did not
+survive multivariate competition.
+
 **PFF × capital interactions:**
 ```python
 yprr_x_capital          = best_yprr × draft_capital_score
@@ -560,7 +588,28 @@ Where `consensus_rank` is clipped at 300 before computing. This is a 0–1 scale
 so rank 1 gives premium = 0.99). **VIF analysis found this collinear with position_rank (r ≈ −0.953)**
 and it was removed from the TE candidate pool. It remains in the WR candidate pool.
 
-### 7.6 Combined Athleticism Composite
+### 7.6 Blended Capital (RB-specific, 2026-03-16)
+
+```python
+# Consensus-projected capital (same decay formula as actual capital)
+_consensus_cap = 100 × exp(−0.023 × (consensus_rank − 1))
+
+# 83/17 blend: 83% actual pick capital + 17% pre-draft consensus rank capital
+blended_capital_rb = 0.83 × draft_capital_score + 0.17 × _consensus_cap
+log_blended_capital = log(blended_capital_rb + 1)
+```
+
+**Motivation:** JJ Zachariason's RB model reportedly blends actual draft pick capital with consensus
+big board rank in an 83/17 ratio. The pre-draft consensus rank captures market expectations that
+sometimes deviate from the actual pick (a player expected at pick 5 who slips to pick 15 still has
+strong pre-draft consensus signal). For pre-draft 2026 scoring, `draft_capital_score` is already
+projected from `consensus_rank`, so the blend reduces to the projected capital itself.
+
+**Lasso selected `blended_capital_rb`** in the Phase C refit alongside `log_draft_capital`. The
+two capital encodings co-exist in the final model — Lasso determined they carry complementary
+(not redundant) information.
+
+### 7.7 Combined Athleticism Composite
 
 ```python
 combined_ath = speed_score × (100 - overall_pick) / 100
@@ -668,12 +717,45 @@ TE: n_estimators=100, max_depth=2, min_child_samples=15, lr=0.05, subsample=0.7,
 directionality (e.g., higher draft capital → higher predicted B2S; lower forty time → higher B2S).
 This prevents the tree from learning counter-intuitive artifacts from noisy training data.
 
-**TE LGBM retirement rule:** If LGBM LOYO R² < Ridge LOYO R² − 0.10, the TE LGBM model is not saved.
-The gap threshold of 0.10 indicates that LGBM is overfit and not generalizing. With N=127 and ~10
-selected features, LightGBM often memorizes training examples without generalizing.
+**LGBM retirement rule:** If LGBM LOYO R² < Ridge LOYO R² − 0.10, the TE LGBM is not saved
+(`retired_gap_too_large`). This check is currently only applied to TE. For WR/RB, LGBM runs
+regardless of the gap — the gap is reported but does not trigger retirement.
+
+**Current LGBM status (as of 2026-03-16):**
+- WR: disabled (run with `--no-lgbm` or skipped)
+- RB: active (LOYO R²=0.326, gap=0.087 vs Ridge 0.413 — gap < 0.10 threshold)
+- TE: disabled
+
+Default scoring (`score_class.py`) always uses Ridge regardless of LGBM status. LGBM is available
+via `--model lgbm` but not used in production scores.
 
 **LGBM is NOT used for Phase I (no-capital) models.** Phase I has even fewer reliable signal features
 and the already-small N combined with no capital signal creates severe overfitting risk for tree models.
+
+### Current Model Results (Capital Model, 2026-03-16)
+
+| Position | N | Selected Features | Ridge LOYO R² | Ridge α | LGBM LOYO R² | LGBM Status |
+|---|---|---|---|---|---|---|
+| WR | 224 | 8 | 0.356 | — | — | disabled |
+| RB | 147 | 11 | 0.413 | 86.9 | 0.326 | active |
+| TE | 97 | 7 | 0.403 | — | — | disabled |
+
+**RB Lasso-selected features (Phase C refit, 2026-03-16):**
+`log_draft_capital`, `capital_x_age`, `pick_capital_x_age`, `total_yards_rate_x_pick_capital`,
+`best_breakout_score`, `blended_capital_rb`, `position_rank`, `best_usage_pass`,
+`college_fantasy_ppg`, `best_rush_ypc`, `best_zone_yprr`
+
+*Previous RB (8 features, pre-Phase C):*
+`log_draft_capital`, `capital_x_age`, `total_yards_rate_x_capital`, `position_rank`, `best_usage_pass`,
+`college_fantasy_ppg`, `best_rush_ypc`, `best_zone_yprr`
+
+**WR Lasso-selected features (unchanged):**
+`log_draft_capital`, `draft_tier`, `breakout_score_x_capital`, `best_age`, `early_declare`,
+`best_routes_per_game`, `best_man_yprr`, `best_man_zone_delta`
+
+**TE Lasso-selected features (unchanged):**
+`overall_pick`, `breakout_score_x_capital`, `consensus_rank`, `weight_lbs`, `forty_time`,
+`broad_jump`, `slot_rate_x_capital`
 
 ### VIF Pruning
 
@@ -801,17 +883,17 @@ rolling window and k-fold provide additional perspectives.
 
 ---
 
-## 12. ZAP Score Construction
+## 12. ORBIT Score Construction
 
-### What ZAP represents
+### What ORBIT represents
 
-ZAP = percentile of a prospect's Ridge-predicted B2S relative to the distribution of Ridge predictions
+ORBIT = percentile of a prospect's Ridge-predicted B2S relative to the distribution of Ridge predictions
 on the **training set**.
 
 ### Formula
 
 ```python
-zap_score = percentileofscore(train_preds_arr, prospect_pred, kind="weak")
+orbit_score = percentileofscore(train_preds_arr, prospect_pred, kind="weak")
 ```
 
 Where:
@@ -821,11 +903,11 @@ Where:
 `kind="weak"` means: fraction of training predictions that are **≤** prospect_pred, times 100.
 
 **Bounded at [0, 100]:** A prospect whose predicted B2S exceeds the maximum training prediction gets
-ZAP = 100.
+ORBIT = 100.
 
 ### Reference distribution
 
-The ZAP percentile is relative to the **training set predictions**, not the training set actual B2S
+The ORBIT percentile is relative to the **training set predictions**, not the training set actual B2S
 values. This is an important distinction:
 
 - Training set actual B2S values include noise, injury, bad teams, etc.
@@ -834,7 +916,7 @@ values. This is an important distinction:
   of historical draftees did this model predict worse than this prospect?"
 
 **Assumption:** The training set prediction distribution is a reasonable reference for "what the model
-knows." A ZAP of 80 means: "This model predicted 80% of 2014–2022 draftees at this position to be
+knows." An ORBIT of 80 means: "This model predicted 80% of 2014–2022 draftees at this position to be
 worse than this prospect." It does NOT mean "This prospect will be at the 80th percentile of NFL
 outcomes" — the LOYO R² of ~0.39–0.41 implies significant uncertainty.
 
@@ -851,7 +933,7 @@ interpretable to end users ("Top 10% prospect" vs "predicted 14.3 PPG B2S").
 ### Capital Delta
 
 ```
-capital_delta = ZAP (capital model) − Phase1_ZAP (no-capital model)
+capital_delta = ORBIT (capital model) − Phase1_ORBIT (no-capital model)
 ```
 
 A positive delta means: the full model (including capital) ranks the player higher than the no-capital
@@ -986,13 +1068,20 @@ podcast transcript (Episode 1083). The SOS_mult formula specifically — `max(0.
 algebraic formula. If JJ's actual formula differs (different SP+ reference point, different multiplier
 range, different age threshold), our breakout score may be systematically different from his.
 
-### 15.9 Team pass attempts as RB denominator
+### 15.9 Team pass attempts as RB denominator — RESOLVED (Phase D, 2026-03-16)
 
-Total yards rate uses team pass attempts as the denominator (§6.3). Total team plays would be more
-appropriate for measuring RB contribution relative to offensive opportunity. Pass attempts are used
-because total team plays are not stored in our database. On run-heavy teams (250 pass attempts,
-600 total plays), this denominator is ~2.4x smaller than the "correct" denominator, inflating
-total_yards_rate for players on those teams.
+**Status: Tested. Pass_att denominator confirmed as adequate.**
+
+Total yards rate uses team pass attempts as the denominator (§6.3). Total team plays would theoretically
+be more appropriate. On run-heavy teams, the pass_att denominator is ~2.4× smaller than total plays,
+potentially inflating rates for RBs on those teams.
+
+**Phase D experiment:** `team_rush_attempts` was added to the database (2,414 rows, 2007–2025) and
+`best_total_yards_rate_v2` was computed with `(pass_att + rush_att)` as denominator. The v1/v2 ratio
+was 0.42 (std 0.06) — the new denominator is meaningfully different. Both features were added to the
+RB candidate pool. **Lasso did not select v2** — it selected `total_yards_rate_x_pick_capital` instead
+(an interaction of v1 with `log_pick_capital`). The pass_att denominator is confirmed as the
+appropriate choice for the current model.
 
 ---
 
@@ -1023,16 +1112,21 @@ An independent reviewer should evaluate each:
 | A18 | TE Ridge alpha range [1–1000] is appropriate for N=127 | Model architecture | Yes — try [0.1–100] for TE and compare LOYO R² |
 | A19 | Nested Lasso on outer-selected features (not full pool) is honest | CV methodology | Yes — compare against full nested pool |
 | A20 | LOYO R² is the primary evaluation metric | CV methodology | Partial — compare rolling window and k-fold |
-| A21 | Training prediction distribution is the right ZAP reference | ZAP construction | Yes — compare against actual B2S percentile distribution |
+| A21 | Training prediction distribution is the right ORBIT reference | ORBIT construction | Yes — compare against actual B2S percentile distribution |
 | A22 | Capital delta thresholds: +20 = High Risk, −15 = Low Risk | Risk classification | Yes — validate against historical outcomes |
 | A23 | Phase I includes recruit_rating (independent of capital) | Phase I design | Yes — recruiting rankings are partially informed by early NFL interest |
 | A24 | consensus_rank as proxy for draft pick in pre-draft scoring | Inference | Yes — check distribution of consensus_rank vs actual pick for historical classes |
 | A25 | PFF split values stored as strings (cast to float before arithmetic) | Data pipeline | Yes — auditable from raw database values |
 | A26 | Power-4 conference binary is meaningful after SP+ adjustment | Feature engineering | Yes — if SP+ correctly adjusts for schedule, power4_conf should add no information |
+| A27 | log_pick_capital [log(1000/(pick+1))] is a better capital encoding than log_draft_capital for RB | Feature engineering | Yes — LOYO delta +0.068 confirmed via Phase C holdout experiment |
+| A28 | 83/17 blend of actual vs. consensus capital captures complementary signal for RB | Feature engineering | Partial — Lasso selected blended_capital_rb alongside log_draft_capital; theory from JJ's podcast |
+| A29 | teammate_score × capital interaction does not carry independent information beyond other capital terms | Feature engineering | Yes — Lasso did not select it in Phase C refit despite +0.057 univariate delta |
+| A30 | Total plays denominator (pass_att + rush_att) is not better than pass_att-only denominator | Feature engineering | Yes — Phase D: Lasso preferred pass_att-based interaction over v2; resolved as A12 |
 
 ---
 
 *End of methodology documentation.*
 
-*Document reflects model state as of 2026-03-14. Key scripts: `scripts/build_training_set.py`,
-`scripts/analyze.py::engineer_features()`, `scripts/fit_model.py`, `scripts/score_class.py`.*
+*Document reflects model state as of 2026-03-16 (Phase C+D refit). Key scripts:
+`scripts/build_training_set.py`, `scripts/analyze.py::engineer_features()`,
+`scripts/fit_model.py`, `scripts/score_class.py`.*

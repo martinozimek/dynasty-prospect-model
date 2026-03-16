@@ -56,7 +56,7 @@ No amount of regularization or CV tuning fully overcomes N=97.
 
 ## Current TE Model Limitations (communicate to users)
 
-1. **N=97 is small**: each 1-point change in ZAP score is within model noise
+1. **N=97 is small**: each 1-point change in ORBIT score is within model noise
 2. **LOYO R²=0.408 is inflated** by the 2016 holdout (n=6, R²=0.826 — luck)
 3. **Rolling-window R²** (reported in score output) is the honest estimate
 4. **Feature count = 10** at the N/feat safety threshold — further feature additions require more data

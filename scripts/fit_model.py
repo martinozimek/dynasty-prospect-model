@@ -37,7 +37,6 @@ Usage:
     python scripts/fit_model.py --all
     python scripts/fit_model.py --position WR
     python scripts/fit_model.py --position WR --no-lgbm      # Ridge only
-    python scripts/fit_model.py --all --target top_season_ppg
     python scripts/fit_model.py --all --start-year 2011      # override 2014 default
     python scripts/fit_model.py --all --no-capital           # Phase I: no-capital model
 """
@@ -137,6 +136,16 @@ _CANDIDATE_FEATURES = {
         # Capital interactions
         "capital_x_age",
         "total_yards_rate_x_capital",
+        # Phase C new features (all cleared ≥+0.005 LOYO threshold)
+        "log_pick_capital",           # JJ-style curve +0.068
+        "pick_capital_x_age",
+        "total_yards_rate_x_pick_capital",
+        "teammate_score_x_capital",   # interaction +0.057
+        "best_breakout_score",        # +0.055
+        "blended_capital_rb",         # 83/17 actual+consensus blend
+        "log_blended_capital",
+        # Phase D: total plays denominator variant
+        "best_total_yards_rate_v2",
         # Pre-draft market
         "consensus_rank", "position_rank",
         # College production — total contribution (JJ's adjusted yards per team play)
@@ -310,6 +319,11 @@ _MONOTONE_DIRECTIONS = {
     "best_breakout_score": 1,
     "breakout_score_x_capital": 1, "breakout_score_x_dominator": 1,
     "best_total_yards_rate": 1,    "total_yards_rate_x_capital": 1,
+    "best_total_yards_rate_v2": 1,
+    "log_pick_capital": 1,         "pick_capital_x_age": 1,
+    "total_yards_rate_x_pick_capital": 1,
+    "teammate_score_x_capital": 1,
+    "blended_capital_rb": 1,       "log_blended_capital": 1,
     "combined_ath_x_capital": 1,
     "overall_pick": -1,       "draft_round": -1,
     "consensus_rank": -1,     "position_rank": -1,
@@ -882,7 +896,7 @@ def fit_position(
         "ridge_top_features": [
             {"feature": f, "coef": float(c)} for f, c in coef_table[:15]
         ],
-        # Training predictions — ZAP score reference (percentile vs this distribution)
+        # Training predictions — ORBIT score reference (percentile vs this distribution)
         "train_preds": [round(float(p), 4) for p in train_preds_arr],
         # D1: conformal prediction interval residuals from LOYO-CV
         "loyo_abs_residuals": cv_ridge.get("abs_residuals", []),
@@ -900,7 +914,7 @@ def main() -> None:
     parser.add_argument("--all", action="store_true", help="Train all positions.")
     parser.add_argument(
         "--target", default="b2s_score",
-        choices=["b2s_score", "top_season_ppg", "year1_ppg"],
+        choices=["b2s_score", "year1_ppg"],
         help="Training target (default: b2s_score)",
     )
     parser.add_argument(

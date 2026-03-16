@@ -239,12 +239,12 @@ Flag players beyond the 95th percentile as low‑confidence predictions.
 
 ## 2.11 Calibration Analysis
 
-ZAP scores assume percentile predictions correspond to actual
+ORBIT scores assume percentile predictions correspond to actual
 performance distributions.
 
 Diagnostic:
 
-Group historical players by predicted ZAP decile and compare predicted
+Group historical players by predicted ORBIT decile and compare predicted
 versus actual B2S averages.
 
 If top deciles systematically overpredict outcomes, calibration
@@ -358,7 +358,7 @@ intervals for B2S outcomes.
 
 Example output:
 
-ZAP = 82\
+ORBIT = 82\
 Expected B2S = 12.3 PPG\
 80% prediction interval = \[7.8, 15.6\]
 
@@ -380,7 +380,7 @@ The following tests should be run before finalizing the model.
 8.  Missing data bias test
 9.  Archetype clustering error analysis
 10. Out‑of‑distribution detection
-11. ZAP calibration curves
+11. ORBIT calibration curves
 12. Largest historical miss analysis
 
 If these diagnostics confirm stability, the model can be considered

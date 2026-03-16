@@ -3,9 +3,9 @@ Apply fitted dynasty prospect models to an upcoming draft class.
 
 Produces a ranked prospect sheet with:
   - Projected B2S score (PPR PPG, natural model units)
-  - ZAP Score (0-100 scale, bounded at 100 as theoretical ceiling)
-    ZAP = percentile of prospect's projected B2S vs training set predictions.
-    Interpretation: ZAP 70 → scores better than 70% of all 2011-2022 training players.
+  - ORBIT Score (0-100 scale, bounded at 100 as theoretical ceiling)
+    ORBIT = percentile of prospect's projected B2S vs training set predictions.
+    Interpretation: ORBIT 70 → scores better than 70% of all 2011-2022 training players.
     100 is the theoretical ceiling; real prospects with elite profiles score in the 70-90s.
 
 Pre-draft capital projection:
@@ -185,6 +185,7 @@ def _load_cfb_prospects(cfb_db_path: str, draft_year: int) -> dict:
             (row.team, row.season_year): {
                 "sp_plus_rating": row.sp_plus_rating,
                 "pass_attempts": row.pass_attempts,
+                "rush_attempts": row.rush_attempts,
             }
             for row in s.query(CFBTeamSeason).all()
         }
@@ -212,8 +213,9 @@ def _load_cfb_prospects(cfb_db_path: str, draft_year: int) -> dict:
             for sn in slist:
                 key = (sn.get("team"), sn.get("season_year"))
                 ts = team_seasons_raw.get(key, {})
-                sn["sp_plus_rating"] = ts.get("sp_plus_rating")
-                sn["team_pass_att"]  = ts.get("pass_attempts")
+                sn["sp_plus_rating"]  = ts.get("sp_plus_rating")
+                sn["team_pass_att"]   = ts.get("pass_attempts")
+                sn["team_rush_att"]   = ts.get("rush_attempts")
                 total_tds = team_rec_tds.get(key, 0)
                 player_tds = sn.get("rec_tds") or 0
                 sn["rec_td_pct"] = player_tds / total_tds if total_tds > 0 else None
@@ -565,6 +567,37 @@ def _total_yards_rate(seasons: list[dict], min_games: int = 6,
     return round(best, 4) if best is not None else None
 
 
+def _total_yards_rate_v2(seasons: list[dict], min_games: int = 6,
+                         recruit_year: int | None = None) -> float | None:
+    """
+    Phase D variant: denominator = team_pass_att + team_rush_att (total team plays).
+    Otherwise identical to _total_yards_rate(). Falls back to pass_att-only if
+    team_rush_att is unavailable.
+    """
+    best = None
+    for s in seasons:
+        if (s.get("games_played") or 0) < min_games:
+            continue
+        team_pass_att = s.get("team_pass_att") or 0
+        if team_pass_att < 200:
+            continue
+        team_rush_att = s.get("team_rush_att") or 0
+        total_plays = team_pass_att + team_rush_att if team_rush_att else team_pass_att
+        total_yards = (s.get("rec_yards") or 0) + (s.get("rush_yards") or 0)
+        age = _resolve_age(s, recruit_year)
+        if age is None:
+            continue
+        sp_plus = s.get("sp_plus_rating")
+        sos_mult = (
+            max(0.70, min(1.30, 1.0 + (sp_plus - 5.0) / 100.0))
+            if sp_plus is not None else 1.0
+        )
+        rate = (total_yards / total_plays) * sos_mult * max(0.0, 26.0 - age)
+        if best is None or rate > best:
+            best = rate
+    return round(best, 4) if best is not None else None
+
+
 def _breakout_age(seasons: list[dict], position: str, min_games: int = 6,
                   recruit_year: int | None = None) -> float | None:
     threshold = _BREAKOUT_THRESHOLD.get(position, 0.20)
@@ -631,6 +664,7 @@ def _build_prospect_row(
     ba = _breakout_age(seasons_raw, position, min_games=min_games, recruit_year=recruit_year)
     best_breakout_score = _breakout_score(seasons_raw, min_games=min_games, recruit_year=recruit_year)
     best_total_yards_rate = _total_yards_rate(seasons_raw, min_games=min_games, recruit_year=recruit_year)
+    best_total_yards_rate_v2 = _total_yards_rate_v2(seasons_raw, min_games=min_games, recruit_year=recruit_year)
 
     best_targets_val = best.get("targets") or 0
     best_receptions_val = best.get("receptions") or 0
@@ -720,6 +754,7 @@ def _build_prospect_row(
         "breakout_age": ba,
         "best_breakout_score": best_breakout_score,
         "best_total_yards_rate": best_total_yards_rate,
+        "best_total_yards_rate_v2": best_total_yards_rate_v2,
         # Career
         "career_seasons": career_seasons,
         "career_rec_yards": career_rec_yards,
@@ -795,7 +830,7 @@ def score_position(
     """
     Load fitted pipeline and score prospects for one position.
 
-    ZAP Score (0-100):
+    ORBIT Score (0-100):
       = percentileofscore(training_ridge_predictions, prospect_ridge_prediction)
       The reference distribution is the Ridge model's in-sample predictions on
       training players - stored in models/metadata.json under {pos}_train_preds.
@@ -842,16 +877,16 @@ def score_position(
     X     = df_eng[features].values
     preds = np.clip(pipeline.predict(X), 0, None)
 
-    # ZAP Score - percentile vs Ridge training prediction distribution.
-    # Bounded [0, 100]: any prospect at or above the training max → ZAP = 100.
+    # ORBIT Score - percentile vs Ridge training prediction distribution.
+    # Bounded [0, 100]: any prospect at or above the training max → ORBIT = 100.
     if len(train_preds_ref) > 0:
-        zap_scores = np.array([
+        orbit_scores = np.array([
             min(100.0, float(percentileofscore(train_preds_ref, p, kind="weak")))
             for p in preds
         ])
     else:
-        log.warning("  No training predictions in metadata - ZAP scores unavailable.")
-        zap_scores = np.full(len(preds), np.nan)
+        log.warning("  No training predictions in metadata - ORBIT scores unavailable.")
+        orbit_scores = np.full(len(preds), np.nan)
 
     # D1: Conformal prediction intervals from LOYO residual distribution
     loyo_residuals = np.array(metadata.get(position, {}).get("loyo_abs_residuals", []))
@@ -887,7 +922,7 @@ def score_position(
 
     result = df[keep_cols].copy()
     result["projected_b2s"] = preds.round(2)
-    result["zap_score"]     = zap_scores.round(1)
+    result["orbit_score"]   = orbit_scores.round(1)
     if not np.isnan(q80):
         result["b2s_lo80"] = (preds - q80).clip(min=0).round(2)
         result["b2s_hi80"] = (preds + q80).round(2)
@@ -895,7 +930,7 @@ def score_position(
         result["b2s_hi90"] = (preds + q90).round(2)
     result["model"]         = model_type
     result["post_draft"]    = post_draft
-    result = result.sort_values("zap_score", ascending=False).reset_index(drop=True)
+    result = result.sort_values("orbit_score", ascending=False).reset_index(drop=True)
     result.insert(0, "pos_rank", result.index + 1)
 
     log.info(
@@ -903,7 +938,7 @@ def score_position(
         position,
         len(result),
         ", ".join(
-            f"{r['player_name']} (ZAP={r['zap_score']:.0f}, B2S={r['projected_b2s']:.1f})"
+            f"{r['player_name']} (ORBIT={r['orbit_score']:.0f}, B2S={r['projected_b2s']:.1f})"
             for _, r in result.head(3).iterrows()
         ),
     )
@@ -1056,17 +1091,17 @@ def main() -> None:
                     model_suffix="_nocap",
                 )
                 if not ph1.empty:
-                    ph1_scored.append(ph1[["player_name", "position", "zap_score"]]
-                                      .rename(columns={"zap_score": "phase1_zap"}))
+                    ph1_scored.append(ph1[["player_name", "position", "orbit_score"]]
+                                      .rename(columns={"orbit_score": "phase1_orbit"}))
 
             if ph1_scored:
                 ph1_df = pd.concat(ph1_scored, ignore_index=True)
                 combined = combined.merge(
                     ph1_df, on=["player_name", "position"], how="left"
                 )
-                combined["phase1_zap"] = combined["phase1_zap"].round(1)
+                combined["phase1_orbit"] = combined["phase1_orbit"].round(1)
                 combined["capital_delta"] = (
-                    combined["zap_score"] - combined["phase1_zap"]
+                    combined["orbit_score"] - combined["phase1_orbit"]
                 ).round(1)
 
                 def _risk(delta):
@@ -1084,13 +1119,13 @@ def main() -> None:
     log.info("Scores written to: %s", out_path)
 
     # Print summary table
-    show_phase1 = args.phase1 and "phase1_zap" in combined.columns
+    show_phase1 = args.phase1 and "phase1_orbit" in combined.columns
     print(f"\n{'='*95 if show_phase1 else 85}")
     print(f"  Dynasty Prospect Model - {args.year} Draft Class Scores ({args.model.upper()})")
     if not args.post_draft:
         print("  NOTE: Pre-draft - draft capital projected from big board consensus rank")
     if show_phase1:
-        print("  Phase I columns: Ph1=no-capital score | Delta=ZAP-Ph1 | Risk profile")
+        print("  Phase I columns: Ph1=no-capital ORBIT | Delta=ORBIT-Ph1 | Risk profile")
     print(f"{'='*95 if show_phase1 else 85}")
     for pos in positions:
         sub = combined[combined["position"] == pos]
@@ -1102,12 +1137,12 @@ def main() -> None:
         _ivl_hdr = f"{'80% Interval':>14}" if _has_interval else ""
         _ivl_w   = 15 if _has_interval else 0
         if show_phase1:
-            print(f"  {'Rank':<4} {'Player':<28} {'Proj B2S':>8} {'ZAP':>5} "
+            print(f"  {'Rank':<4} {'Player':<28} {'Proj B2S':>8} {'ORBIT':>6} "
                   f"{'Ph1':>5} {'Delta':>6} {'Risk':<10} "
                   f"{_ivl_hdr}{'Dom':>6} {'RecRate':>7} {'Board':>5}")
             print("  " + "-" * (92 + _ivl_w))
         else:
-            print(f"  {'Rank':<4} {'Player':<28} {'Proj B2S':>8} {'ZAP':>5} "
+            print(f"  {'Rank':<4} {'Player':<28} {'Proj B2S':>8} {'ORBIT':>6} "
                   f"{_ivl_hdr}{'Dom':>6} {'RecRate':>7} {'CfpPPG':>6} {'Board':>5}")
             print("  " + "-" * (80 + _ivl_w))
         for _, r in sub.head(20).iterrows():
@@ -1117,14 +1152,14 @@ def main() -> None:
             else:
                 _ivl_col = f"{'':>{_ivl_w}}" if _ivl_w else ""
             if show_phase1:
-                ph1_val   = r.get("phase1_zap")
+                ph1_val   = r.get("phase1_orbit")
                 delta_val = r.get("capital_delta")
                 risk_val  = r.get("risk", "N/A")
                 ph1_str   = f"{ph1_val:>5.1f}" if pd.notna(ph1_val) else f"{'--':>5}"
                 delta_str = (f"{delta_val:>+6.1f}" if pd.notna(delta_val) else f"{'--':>6}")
                 print(
                     f"  {r['pos_rank']:<4} {r['player_name']:<28} "
-                    f"{r['projected_b2s']:>8.2f} {r['zap_score']:>5.1f} "
+                    f"{r['projected_b2s']:>8.2f} {r['orbit_score']:>6.1f} "
                     f"{ph1_str} {delta_str} {risk_val:<10} "
                     f"{_ivl_col}"
                     f"{(r.get('best_dominator') or 0):>6.3f} "
@@ -1134,7 +1169,7 @@ def main() -> None:
             else:
                 print(
                     f"  {r['pos_rank']:<4} {r['player_name']:<28} "
-                    f"{r['projected_b2s']:>8.2f} {r['zap_score']:>5.1f} "
+                    f"{r['projected_b2s']:>8.2f} {r['orbit_score']:>6.1f} "
                     f"{_ivl_col}"
                     f"{(r.get('best_dominator') or 0):>6.3f} "
                     f"{(r.get('best_rec_rate') or 0):>7.4f} "

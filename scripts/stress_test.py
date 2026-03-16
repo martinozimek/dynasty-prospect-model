@@ -7,7 +7,7 @@ No model changes are made. Results are written to output/stress_test/.
 Tests:
   A1  Bootstrap Lasso stability (1000 resamples, selection frequency per feature)
   A2  Feature knockout (one-at-a-time LOYO R² drop)
-  A3  ZAP calibration curve (predicted decile vs actual B2S mean)
+  A3  ORBIT calibration curve (predicted decile vs actual B2S mean)
   A4  Label permutation test (shuffle B2S → expect LOYO R²≈0)
   A5  Capital decomposition (capital-only vs Phase I vs full model LOYO R²)
 
@@ -174,7 +174,7 @@ def test_a2_knockout(pos, df, features, alpha_range, target=TARGET):
 
 
 # ---------------------------------------------------------------------------
-# A3 — ZAP calibration curve
+# A3 — ORBIT calibration curve
 # ---------------------------------------------------------------------------
 
 def test_a3_calibration(pos, df, features, alpha_range, target=TARGET, n_bins=10):
@@ -195,17 +195,17 @@ def test_a3_calibration(pos, df, features, alpha_range, target=TARGET, n_bins=10
         test_preds  = np.clip(pipe.predict(test[used].values), 0, None)
 
         for pred, actual in zip(test_preds, test[target].values):
-            zap = float(np.mean(train_preds <= pred) * 100)
-            records.append({"zap": zap, "pred_b2s": pred, "actual_b2s": actual})
+            orbit = float(np.mean(train_preds <= pred) * 100)
+            records.append({"orbit": orbit, "pred_b2s": pred, "actual_b2s": actual})
 
     df_cal = pd.DataFrame(records)
     if df_cal.empty:
         return []
 
-    df_cal["zap_bin"] = pd.cut(df_cal["zap"], bins=n_bins, labels=False)
+    df_cal["orbit_bin"] = pd.cut(df_cal["orbit"], bins=n_bins, labels=False)
     results = []
     for b in range(n_bins):
-        grp = df_cal[df_cal["zap_bin"] == b]
+        grp = df_cal[df_cal["orbit_bin"] == b]
         if grp.empty:
             continue
         lo = b * (100 / n_bins)
@@ -221,7 +221,7 @@ def test_a3_calibration(pos, df, features, alpha_range, target=TARGET, n_bins=10
     # Overall Spearman rank correlation
     rho, p = spearmanr(df_cal["pred_b2s"], df_cal["actual_b2s"])
     top12_threshold = df_cal["actual_b2s"].quantile(0.75)  # approx top-25%
-    df_cal["predicted_top12"] = df_cal["zap"] >= 75
+    df_cal["predicted_top12"] = df_cal["orbit"] >= 75
     df_cal["actual_top12"]    = df_cal["actual_b2s"] >= top12_threshold
     top12_hit_rate = float((df_cal["predicted_top12"] & df_cal["actual_top12"]).sum() /
                            df_cal["predicted_top12"].sum()) if df_cal["predicted_top12"].sum() > 0 else float("nan")
@@ -231,7 +231,7 @@ def test_a3_calibration(pos, df, features, alpha_range, target=TARGET, n_bins=10
         "bins": results,
         "spearman_rho": round(float(rho), 4),
         "spearman_p": round(float(p), 4),
-        "top25pct_hit_rate_at_zap75": round(top12_hit_rate, 3),
+        "top25pct_hit_rate_at_orbit75": round(top12_hit_rate, 3),
         "top25pct_base_rate": round(top12_precision_naive, 3),
     }
 
@@ -389,12 +389,12 @@ def main():
             if isinstance(r, dict):
                 log.info("  A3 [%s] Spearman rho=%.4f (p=%.4f)", pos,
                          r["spearman_rho"], r["spearman_p"])
-                log.info("  A3 [%s] Top-25pct hit rate @ ZAP>=75: %.1f%% (base=%.1f%%)",
-                         pos, r["top25pct_hit_rate_at_zap75"] * 100,
+                log.info("  A3 [%s] Top-25pct hit rate @ ORBIT>=75: %.1f%% (base=%.1f%%)",
+                         pos, r["top25pct_hit_rate_at_orbit75"] * 100,
                          r["top25pct_base_rate"] * 100)
                 for b in r["bins"]:
                     bias_str = f"{b['bias']:+.2f}"
-                    log.info("    ZAP %s  n=%3d  pred=%.2f  actual=%.2f  bias=%s",
+                    log.info("    ORBIT %s  n=%3d  pred=%.2f  actual=%.2f  bias=%s",
                              b["bin_label"], b["n"], b["pred_b2s_mean"],
                              b["actual_b2s_mean"], bias_str)
 
@@ -442,7 +442,7 @@ def main():
         if "A3_calibration" in res and isinstance(res["A3_calibration"], dict):
             c = res["A3_calibration"]
             print(f"    A3 Calibr:   Spearman rho={c['spearman_rho']:.4f}  "
-                  f"top25%_hit={c['top25pct_hit_rate_at_zap75']:.1%}  "
+                  f"top25%_hit={c['top25pct_hit_rate_at_orbit75']:.1%}  "
                   f"base={c['top25pct_base_rate']:.1%}")
     print("=" * 80)
 

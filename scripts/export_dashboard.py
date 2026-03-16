@@ -71,6 +71,14 @@ FEATURE_LABELS = {
     "draft_premium": "Draft Premium",
     "recruit_rating": "Recruit Rating",
     "power4_conf": "Power 4 Conference",
+    # Phase C features (2026-03-16)
+    "log_pick_capital": "JJ Pick Capital (log)",
+    "pick_capital_x_age": "Pick Capital × Age",
+    "total_yards_rate_x_pick_capital": "Total Yards Rate × Pick Cap",
+    "teammate_score_x_capital": "Teammate Score × Capital",
+    "blended_capital_rb": "Blended Capital (RB 83/17)",
+    "log_blended_capital": "Blended Capital (log)",
+    "best_total_yards_rate_v2": "Total Yards Rate v2 (total plays)",
 }
 
 # Features where LOWER = BETTER (invert percentile)
@@ -240,14 +248,14 @@ def row_to_player(row: pd.Series, pos: str, dists: dict, year: int) -> dict:
         "capital_is_projected": bool(g("capital_is_projected", True)),
         "draft_capital_score": safe_float(g("draft_capital_score")),
         "projected_b2s": safe_float(g("projected_b2s")),
-        "zap_score": safe_float(g("zap_score")),
+        "orbit_score": safe_float(g("orbit_score")),
         "b2s_lo80": safe_float(g("b2s_lo80")),
         "b2s_hi80": safe_float(g("b2s_hi80")),
         "b2s_lo90": safe_float(g("b2s_lo90")),
         "b2s_hi90": safe_float(g("b2s_hi90")),
         "model": str(g("model", "ridge")),
         "post_draft": bool(g("post_draft", False)),
-        "phase1_zap": safe_float(g("phase1_zap")),
+        "phase1_orbit": safe_float(g("phase1_orbit")),
         "capital_delta": safe_float(g("capital_delta")),
         "risk": str(g("risk", "")) if g("risk") is not None else None,
         "b2s_score": None,  # future class — no actual outcome
@@ -552,19 +560,19 @@ tbody tr.selected { background: var(--accent-dim); }
 tbody td { padding: 10px 14px; color: var(--text); vertical-align: middle; }
 tbody td.muted { color: var(--text-muted); }
 
-/* ── ZAP bar ── */
-.zap-cell { display: flex; align-items: center; gap: 8px; }
-.zap-num {
+/* ── ORBIT bar ── */
+.orbit-cell { display: flex; align-items: center; gap: 8px; }
+.orbit-num {
   font-weight: 700; font-size: 14px; min-width: 32px; text-align: right;
 }
-.zap-bar-track {
+.orbit-bar-track {
   flex: 1; max-width: 60px; height: 6px; background: var(--surface3);
   border-radius: 3px; overflow: hidden;
 }
-.zap-bar-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
-.zap-green { color: var(--green); }
-.zap-yellow { color: var(--yellow); }
-.zap-red { color: var(--red); }
+.orbit-bar-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
+.orbit-green { color: var(--green); }
+.orbit-yellow { color: var(--yellow); }
+.orbit-red { color: var(--red); }
 
 /* ── Delta ── */
 .delta-pos { color: var(--red); font-weight: 600; }
@@ -809,7 +817,7 @@ tbody td.muted { color: var(--text-muted); }
         <div class="about-section">
           <h2>Dynasty Prospect Model</h2>
           <p>A Ridge regression model trained on 2011–2022 NFL draft classes to predict <strong>Best 2 of 3 Seasons (B2S)</strong> PPR fantasy points per game for WR, RB, and TE prospects. The model uses pre-draft college performance, athleticism, and draft capital signals.</p>
-          <p><strong>ZAP Score</strong> (0–100) is a calibrated composite that incorporates all model signals. <strong>Phase I ZAP</strong> is the talent-only score (no draft capital). <strong>Capital Delta</strong> measures how much draft capital shifts the score.</p>
+          <p><strong>ORBIT Score</strong> (0–100) is a calibrated composite that incorporates all model signals. <strong>Phase I ORBIT</strong> is the talent-only score (no draft capital). <strong>Capital Delta</strong> measures how much draft capital shifts the score.</p>
           <p><strong>B2S</strong>: Best 2 of first 3 NFL seasons PPR PPG (minimum 8 games each). Higher is better; NFL starters typically score 10–15 B2S PPG.</p>
         </div>
         <div class="about-section">
@@ -824,7 +832,7 @@ tbody td.muted { color: var(--text-muted); }
         <div class="about-section">
           <h2>Disclaimer</h2>
           <div class="disclaimer">
-            This model is a research tool for dynasty fantasy football analysis. Predictions are probabilistic — even a ZAP 95 prospect can bust. Draft capital projections (pre-draft) are estimates based on consensus big board rankings and carry additional uncertainty. Model was trained on 2011–2022 draft classes only; out-of-sample performance may differ. Not financial advice.
+            This model is a research tool for dynasty fantasy football analysis. Predictions are probabilistic — even an ORBIT 95 prospect can bust. Draft capital projections (pre-draft) are estimates based on consensus big board rankings and carry additional uncertainty. Model was trained on 2011–2022 draft classes only; out-of-sample performance may differ. Not financial advice.
           </div>
         </div>
       </div>
@@ -880,21 +888,21 @@ function fmtHeight(inches) {
   return `${ft}'${inn}"`;
 }
 
-function zapColor(z) {
+function orbitColor(z) {
   if (z === null || z === undefined) return 'var(--text-muted)';
   if (z >= 80) return 'var(--green)';
   if (z >= 50) return 'var(--yellow)';
   return 'var(--red)';
 }
 
-function zapClass(z) {
+function orbitClass(z) {
   if (z === null || z === undefined) return '';
-  if (z >= 80) return 'zap-green';
-  if (z >= 50) return 'zap-yellow';
-  return 'zap-red';
+  if (z >= 80) return 'orbit-green';
+  if (z >= 50) return 'orbit-yellow';
+  return 'orbit-red';
 }
 
-function zapBarColor(z) {
+function orbitBarColor(z) {
   if (z >= 80) return 'var(--green)';
   if (z >= 50) return 'var(--yellow)';
   return 'var(--red)';
@@ -1000,18 +1008,18 @@ const RANK_COLS = [
       const w = r.weight_lbs !== null ? `${Math.round(r.weight_lbs)} lbs` : '—';
       return `<span style="color:var(--text-muted)">${h} / ${w}</span>`;
     }, noSort: true },
-  { key: 'zap_score', label: 'ZAP', fmt: v => {
+  { key: 'orbit_score', label: 'ORBIT', fmt: v => {
       if (v === null || v === undefined) return '—';
       const z = Math.round(v);
       const pct = Math.min(100, Math.max(0, v));
-      return `<div class="zap-cell">
-        <span class="zap-num ${zapClass(v)}">${z}</span>
-        <div class="zap-bar-track">
-          <div class="zap-bar-fill" style="width:${pct}%;background:${zapBarColor(v)}"></div>
+      return `<div class="orbit-cell">
+        <span class="orbit-num ${orbitClass(v)}">${z}</span>
+        <div class="orbit-bar-track">
+          <div class="orbit-bar-fill" style="width:${pct}%;background:${orbitBarColor(v)}"></div>
         </div>
       </div>`;
     }},
-  { key: 'phase1_zap', label: 'Ph1 ZAP', fmt: v => v !== null && v !== undefined ? `<span style="color:var(--text-muted)">${Math.round(v)}</span>` : '<span class="empty-dash">—</span>' },
+  { key: 'phase1_orbit', label: 'Ph1 ORBIT', fmt: v => v !== null && v !== undefined ? `<span style="color:var(--text-muted)">${Math.round(v)}</span>` : '<span class="empty-dash">—</span>' },
   { key: 'capital_delta', label: 'Δ', fmt: v => deltaHtml(v) },
   { key: 'risk', label: 'Risk', fmt: v => riskBadge(v), noSort: true },
   { key: '_ci', label: '80% CI', fmt: (_, r) => {
@@ -1158,16 +1166,16 @@ function renderPlayerPanel(p) {
   </div>`;
 
   // Score cards
-  const zapColor2 = zapColor(p.zap_score);
+  const orbitColor2 = orbitColor(p.orbit_score);
   html += `<div class="score-cards">
     <div class="score-card">
-      <div class="score-card-label">ZAP</div>
-      <div class="score-card-val" style="color:${zapColor2}">${p.zap_score !== null ? Math.round(p.zap_score) : '—'}</div>
+      <div class="score-card-label">ORBIT</div>
+      <div class="score-card-val" style="color:${orbitColor2}">${p.orbit_score !== null ? Math.round(p.orbit_score) : '—'}</div>
       <div class="score-card-sub">${p.projected_b2s !== null ? `Proj B2S: ${fmt(p.projected_b2s)}` : ''}</div>
     </div>
     <div class="score-card">
-      <div class="score-card-label">Phase I ZAP</div>
-      <div class="score-card-val" style="color:var(--text-muted)">${p.phase1_zap !== null && p.phase1_zap !== undefined ? Math.round(p.phase1_zap) : '—'}</div>
+      <div class="score-card-label">Phase I ORBIT</div>
+      <div class="score-card-val" style="color:var(--text-muted)">${p.phase1_orbit !== null && p.phase1_orbit !== undefined ? Math.round(p.phase1_orbit) : '—'}</div>
       <div class="score-card-sub">Talent-only</div>
     </div>
     <div class="score-card">
@@ -1318,13 +1326,13 @@ function renderScatter() {
   const canvas = document.getElementById('scatter-canvas');
 
   // Filter players with both scores
-  const pts = players.filter(p => p.zap_score !== null && p.phase1_zap !== null);
+  const pts = players.filter(p => p.orbit_score !== null && p.phase1_orbit !== null);
 
   const colorMap = { 'Low Risk': '#22c55e', 'Neutral': '#94a3b8', 'High Risk': '#ef4444', null: '#64748b' };
 
   const datasets = [{
     label: 'Prospects',
-    data: pts.map(p => ({ x: p.phase1_zap, y: p.zap_score, player: p })),
+    data: pts.map(p => ({ x: p.phase1_orbit, y: p.orbit_score, player: p })),
     backgroundColor: pts.map(p => {
       const r = p.risk || '';
       if (r.includes('Low')) return 'rgba(34,197,94,0.75)';
@@ -1336,8 +1344,8 @@ function renderScatter() {
   }];
 
   // Diagonal line
-  const minV = Math.min(...pts.map(p => Math.min(p.phase1_zap, p.zap_score)), 0);
-  const maxV = Math.max(...pts.map(p => Math.max(p.phase1_zap, p.zap_score)), 100);
+  const minV = Math.min(...pts.map(p => Math.min(p.phase1_orbit, p.orbit_score)), 0);
+  const maxV = Math.max(...pts.map(p => Math.max(p.phase1_orbit, p.orbit_score)), 100);
   datasets.push({
     label: 'y=x line',
     data: [{ x: minV, y: minV }, { x: maxV, y: maxV }],
@@ -1367,7 +1375,7 @@ function renderScatter() {
             label: ctx => {
               const p = ctx.raw.player;
               if (!p) return '';
-              return [`${p.name} (${p.college})`, `ZAP: ${Math.round(p.zap_score)}  Ph1: ${Math.round(p.phase1_zap)}  Δ: ${p.capital_delta !== null ? Number(p.capital_delta).toFixed(1) : '—'}`, `Risk: ${p.risk || '—'}`];
+              return [`${p.name} (${p.college})`, `ORBIT: ${Math.round(p.orbit_score)}  Ph1: ${Math.round(p.phase1_orbit)}  Δ: ${p.capital_delta !== null ? Number(p.capital_delta).toFixed(1) : '—'}`, `Risk: ${p.risk || '—'}`];
             },
           },
           backgroundColor: 'rgba(26,29,39,0.97)',
@@ -1378,12 +1386,12 @@ function renderScatter() {
       },
       scales: {
         x: {
-          title: { display: true, text: 'Phase I ZAP (Talent Only)', color: '#94a3b8', font: { size: 12 } },
+          title: { display: true, text: 'Phase I ORBIT (Talent Only)', color: '#94a3b8', font: { size: 12 } },
           grid: { color: 'rgba(45,49,72,0.5)' },
           ticks: { color: '#64748b' },
         },
         y: {
-          title: { display: true, text: 'ZAP Score (Full Model)', color: '#94a3b8', font: { size: 12 } },
+          title: { display: true, text: 'ORBIT Score (Full Model)', color: '#94a3b8', font: { size: 12 } },
           grid: { color: 'rgba(45,49,72,0.5)' },
           ticks: { color: '#64748b' },
         },

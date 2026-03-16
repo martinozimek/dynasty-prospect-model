@@ -1,7 +1,7 @@
 """
 Dynasty Prospect Viewer
 =======================
-A tkinter GUI for exploring 2026 draft class ZAP scores, Phase I scores,
+A tkinter GUI for exploring 2026 draft class ORBIT scores, Phase I scores,
 capital deltas, and full prospect breakdowns.
 
 Usage:
@@ -52,7 +52,7 @@ RISK_COLORS = {"High Risk": HIGH_RISK, "Low Risk": LOW_RISK,
 # ── human-readable column labels ───────────────────────────────────────────
 COL_LABELS = {
     "pos_rank": "Rank", "player_name": "Player", "position": "Pos",
-    "zap_score": "ZAP", "phase1_zap": "Ph1", "capital_delta": "Delta",
+    "orbit_score": "ORBIT", "phase1_orbit": "Ph1", "capital_delta": "Delta",
     "risk": "Risk", "projected_b2s": "Proj B2S",
     "best_dominator": "Dominator", "best_rec_rate": "Rec Rate",
     "college_fantasy_ppg": "CFP PPG", "breakout_age": "BO Age",
@@ -107,7 +107,7 @@ def _load_scores(year: int) -> pd.DataFrame:
         )
     df = pd.read_csv(path)
     # Ensure phase1 columns exist (graceful fallback)
-    for col in ("phase1_zap", "capital_delta", "risk"):
+    for col in ("phase1_orbit", "capital_delta", "risk"):
         if col not in df.columns:
             df[col] = np.nan if col != "risk" else "N/A"
     return df
@@ -186,7 +186,7 @@ class ProspectViewer(tk.Tk):
             return
 
         self.train_dists = _load_training_distributions()
-        self._sort_col = "zap_score"
+        self._sort_col = "orbit_score"
         self._sort_asc = False
         self._active_pos = "All"
         self._filter_risk = "All"
@@ -228,14 +228,14 @@ class ProspectViewer(tk.Tk):
             font=("Helvetica", 16, "bold"), bg=ACCENT, fg="white",
         ).pack(side=tk.LEFT, padx=12, pady=8)
 
-        # ZAP summary badges
+        # ORBIT summary badges
         for pos in ("WR", "RB", "TE"):
             sub = self.df[self.df["position"] == pos]
-            top = sub.nlargest(1, "zap_score")
+            top = sub.nlargest(1, "orbit_score")
             if not top.empty:
                 r = top.iloc[0]
                 lbl = (f"  {pos}#1: {r['player_name'].split()[-1]}"
-                       f" ZAP={r['zap_score']:.0f}  ")
+                       f" ORBIT={r['orbit_score']:.0f}  ")
                 tk.Label(
                     bar, text=lbl, font=("Helvetica", 10, "bold"),
                     bg=POS_COLORS[pos], fg="white",
@@ -290,8 +290,8 @@ class ProspectViewer(tk.Tk):
         self._stats_label.pack(side=tk.RIGHT, padx=12)
 
     def _build_table(self, parent):
-        cols = ("pos_rank", "player_name", "position", "zap_score",
-                "phase1_zap", "capital_delta", "risk",
+        cols = ("pos_rank", "player_name", "position", "orbit_score",
+                "phase1_orbit", "capital_delta", "risk",
                 "projected_b2s", "best_dominator", "best_rec_rate",
                 "college_fantasy_ppg", "weight_lbs",
                 "speed_score", "forty_time", "consensus_rank")
@@ -324,7 +324,7 @@ class ProspectViewer(tk.Tk):
 
         widths = {
             "pos_rank": 46, "player_name": 180, "position": 46,
-            "zap_score": 52, "phase1_zap": 52, "capital_delta": 56,
+            "orbit_score": 52, "phase1_orbit": 52, "capital_delta": 56,
             "risk": 84, "projected_b2s": 72,
             "best_dominator": 72, "best_rec_rate": 72,
             "college_fantasy_ppg": 68, "weight_lbs": 58,
@@ -421,7 +421,7 @@ class ProspectViewer(tk.Tk):
                 v = row.get(c, "")
                 if pd.isna(v):
                     values.append("—")
-                elif c in ("zap_score", "phase1_zap", "projected_b2s"):
+                elif c in ("orbit_score", "phase1_orbit", "projected_b2s"):
                     values.append(f"{float(v):.1f}")
                 elif c == "capital_delta" and pd.notna(v):
                     values.append(f"{float(v):+.1f}")
@@ -478,15 +478,15 @@ class ProspectViewer(tk.Tk):
                 continue
 
             players = [n.split()[-1] for n in sub["player_name"]]
-            zap = sub["zap_score"].values
-            ph1 = sub["phase1_zap"].values if "phase1_zap" in sub else None
+            zap = sub["orbit_score"].values
+            ph1 = sub["phase1_orbit"].values if "phase1_orbit" in sub else None
 
             y = np.arange(len(players))
             color = POS_COLORS.get(pos, ACCENT)
 
             ax.set_facecolor(PANEL)
             ax.barh(y, zap, height=0.55, color=color, alpha=0.85,
-                    label="ZAP")
+                    label="ORBIT")
             if ph1 is not None and not np.all(np.isnan(ph1.astype(float))):
                 ax.scatter(ph1, y, color=GOLD, s=30, zorder=5,
                            label="Phase I", marker="D")
@@ -576,7 +576,7 @@ class PlayerDetail(tk.Toplevel):
             bg=POS_COLORS.get(pos, ACCENT), fg="white",
         ).pack(side=tk.LEFT, padx=4)
 
-        # ZAP/Ph1/Delta badges
+        # ORBIT/Ph1/Delta badges
         for label, val, color in self._badge_data():
             frm = tk.Frame(hdr, bg=color, padx=10, pady=4)
             frm.pack(side=tk.RIGHT, padx=6, pady=10)
@@ -600,15 +600,15 @@ class PlayerDetail(tk.Toplevel):
         self._build_charts(right, pos)
 
     def _badge_data(self):
-        zap  = self.row.get("zap_score",     np.nan)
-        ph1  = self.row.get("phase1_zap",    np.nan)
+        zap  = self.row.get("orbit_score",   np.nan)
+        ph1  = self.row.get("phase1_orbit", np.nan)
         delt = self.row.get("capital_delta", np.nan)
         risk = self.row.get("risk", "N/A")
         risk_col = RISK_COLORS.get(risk, NEUTRAL)
 
         badges = []
         if pd.notna(zap):
-            badges.append(("ZAP Score", f"{zap:.0f}", ACCENT))
+            badges.append(("ORBIT Score", f"{zap:.0f}", ACCENT))
         if pd.notna(ph1):
             badges.append(("Phase I", f"{ph1:.0f}", "#8e44ad"))
         if pd.notna(delt):
@@ -674,8 +674,8 @@ class PlayerDetail(tk.Toplevel):
             return td[col] if td is not None and col in td.columns else None
 
         section("Model Scores")
-        row_stat("ZAP Score",     fmt(get("zap_score"), 1),    ts("b2s_score"))
-        row_stat("Phase I ZAP",   fmt(get("phase1_zap"), 1))
+        row_stat("ORBIT Score",   fmt(get("orbit_score"), 1),  ts("b2s_score"))
+        row_stat("Phase I ORBIT", fmt(get("phase1_orbit"), 1))
         row_stat("Capital Delta",
                  f"{get('capital_delta'):+.1f}" if get("capital_delta") is not None else None)
         row_stat("Risk",          str(r.get("risk", "N/A")))
@@ -748,15 +748,15 @@ class PlayerDetail(tk.Toplevel):
                 spine.set_edgecolor(BG)
             ax_radar.set_facecolor(PANEL)
 
-        # ── ZAP vs Phase I gauge ─────────────────────────────────
+        # ── ORBIT vs Phase I gauge ───────────────────────────────
         ax_gauge = fig.add_subplot(122)
         ax_gauge.set_facecolor(PANEL)
         ax_gauge.set_xlim(-0.6, 0.6)
         ax_gauge.set_ylim(0, 110)
         ax_gauge.axis("off")
 
-        zap  = self.row.get("zap_score", np.nan)
-        ph1  = self.row.get("phase1_zap", np.nan)
+        zap  = self.row.get("orbit_score", np.nan)
+        ph1  = self.row.get("phase1_orbit", np.nan)
         delt = self.row.get("capital_delta", np.nan)
         risk = self.row.get("risk", "N/A")
         risk_col = RISK_COLORS.get(risk, NEUTRAL)
@@ -773,7 +773,7 @@ class PlayerDetail(tk.Toplevel):
 
         if pd.notna(zap):
             _gauge_bar(ax_gauge, -0.2, 0, float(zap),
-                       POS_COLORS.get(pos, ACCENT), "ZAP", zap)
+                       POS_COLORS.get(pos, ACCENT), "ORBIT", zap)
         if pd.notna(ph1):
             _gauge_bar(ax_gauge, 0.2, 0, float(ph1),
                        "#8e44ad", "Phase I", ph1)
@@ -791,7 +791,7 @@ class PlayerDetail(tk.Toplevel):
                          linestyle="--", alpha=0.5)
         ax_gauge.text(0.55, 51, "50th pct", color=SUBTEXT,
                       fontsize=7, va="bottom")
-        ax_gauge.set_title("ZAP vs Phase I", color=TEXT, size=9, pad=6)
+        ax_gauge.set_title("ORBIT vs Phase I", color=TEXT, size=9, pad=6)
 
         fig.tight_layout(pad=1.5)
 

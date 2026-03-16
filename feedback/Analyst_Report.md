@@ -22,9 +22,9 @@ empirically validated by the test results.
 
 The Dynasty Prospect Model predicts a prospect's **B2S score** (Best 2 of 3 NFL seasons,
 PPR PPG, minimum 8 games per season) from pre-draft college, PFF efficiency, and draft
-capital features. It produces a **ZAP score** (0–100 percentile vs training set) for
+capital features. It produces a **ORBIT score** (0–100 percentile vs training set) for
 each prospect, along with a **Phase I / Capital Delta** risk framework that shows how
-much of a player's ZAP is driven by NFL draft capital vs independent college evidence.
+much of a player's ORBIT is driven by NFL draft capital vs independent college evidence.
 
 Three separate Ridge models are trained — one per position (WR, RB, TE) — using
 Leave-One-Year-Out cross-validation over 2014–2022 draft classes.
@@ -176,9 +176,9 @@ effects, no action warranted.
 
 ---
 
-### A3 — ZAP Calibration Curve
+### A3 — ORBIT Calibration Curve
 
-**Purpose:** Test whether ZAP rank order corresponds to actual B2S outcomes. Primary
+**Purpose:** Test whether ORBIT rank order corresponds to actual B2S outcomes. Primary
 concern: systematic overconfidence at top deciles (predicted > actual), which would
 indicate survivorship bias inflating top scores.
 
@@ -192,7 +192,7 @@ All three positions show rank-order signal 2.2–2.6× the base rate.
 
 **WR decile calibration:**
 
-| ZAP Decile | N | Predicted B2S | Actual B2S | Bias |
+| ORBIT Decile | N | Predicted B2S | Actual B2S | Bias |
 |------------|---|:-------------:|:----------:|:----:|
 | 0–10 | 23 | 2.24 | 2.82 | −0.58 |
 | 10–20 | 25 | 3.31 | 2.44 | +0.87 |
@@ -205,7 +205,7 @@ All three positions show rank-order signal 2.2–2.6× the base rate.
 | 80–90 | 24 | 10.19 | 10.07 | **+0.12** |
 | 90–100 | 22 | 12.41 | 12.32 | **+0.08** |
 
-Top deciles (80–100) are well calibrated (biases of +0.12 and +0.08). The 30–40 decile
+Top deciles (80–100) are well calibrated (biases of +0.12 and +0.08). The 30–40 ORBIT decile
 shows overconfidence (+1.46) — mid-round WRs who don't always deliver. Crucially, there
 is **no systematic overconfidence at the top**. The C1 survivorship correction is not
 warranted.
@@ -357,9 +357,9 @@ columns (`b2s_lo80`, `b2s_hi80`, `b2s_lo90`, `b2s_hi90`) in the output CSV.
 Example from 2026 scoring:
 ```
   WR top 5 (pre-draft):
-  1   Makai Lemon      Proj B2S=11.6  ZAP=93  80% Interval=[6.2–16.9]
-  2   Carnell Tate     Proj B2S=11.4  ZAP=92  80% Interval=[6.0–16.8]
-  3   Jordyn Tyson     Proj B2S=10.2  ZAP=86  80% Interval=[4.8–15.5]
+  1   Makai Lemon      Proj B2S=11.6  ORBIT=93  80% Interval=[6.2–16.9]
+  2   Carnell Tate     Proj B2S=11.4  ORBIT=92  80% Interval=[6.0–16.8]
+  3   Jordyn Tyson     Proj B2S=10.2  ORBIT=86  80% Interval=[4.8–15.5]
 ```
 
 ### D2 — Ensemble Blend (Rejected)
@@ -432,39 +432,39 @@ model. This is not a regression; it is a more accurate measurement.
 
 ### Wide Receiver
 
-| Rank | Player | Proj B2S | ZAP | Ph1 | Delta | Risk | 80% Interval |
-|------|--------|:--------:|:---:|:---:|:-----:|:----:|:------------:|
+| Rank | Player | Proj B2S | ORBIT | Ph1 | Delta | Risk | 80% Interval |
+|------|--------|:--------:|:-----:|:---:|:-----:|:----:|:------------:|
 | 1 | Makai Lemon | 11.6 | 93 | 79 | +15 | Neutral | [6.2–16.9] |
 | 2 | Carnell Tate | 11.4 | 92 | 88 | +5 | Neutral | [6.0–16.8] |
 | 3 | Jordyn Tyson | 10.2 | 86 | 42 | +44 | High Risk | [4.8–15.5] |
 | 4 | Omar Cooper Jr. | 9.1 | 78 | 66 | +12 | Neutral | [3.7–14.5] |
 | 5 | Malachi Fields | 8.9 | 75 | 30 | +46 | High Risk | [3.5–14.2] |
 
-Notable: Jordyn Tyson (ZAP=86, Phase I=42, delta=+44) and Malachi Fields (ZAP=75,
-Phase I=30, delta=+46) carry significant capital premiums. Their ZAP scores are driven
+Notable: Jordyn Tyson (ORBIT=86, Phase I=42, delta=+44) and Malachi Fields (ORBIT=75,
+Phase I=30, delta=+46) carry significant capital premiums. Their ORBIT scores are driven
 heavily by projected draft capital rather than independent college production evidence.
 
 ### Running Back
 
-| Rank | Player | Proj B2S | ZAP | Ph1 | Delta | Risk | 80% Interval |
-|------|--------|:--------:|:---:|:---:|:-----:|:----:|:------------:|
+| Rank | Player | Proj B2S | ORBIT | Ph1 | Delta | Risk | 80% Interval |
+|------|--------|:--------:|:-----:|:---:|:-----:|:----:|:------------:|
 | 1 | Jeremiyah Love | 17.9 | 97 | 93 | +5 | Neutral | [12.2–23.8] |
 | 2 | Emmett Johnson | 11.1 | 83 | 68 | +15 | Neutral | [5.3–16.9] |
 | 3 | Jonah Coleman | 9.1 | 68 | 63 | +5 | Neutral | [3.3–14.9] |
 
-Notable: Jeremiyah Love (ZAP=97, Phase I=93) has the full model's endorsement confirmed
+Notable: Jeremiyah Love (ORBIT=97, Phase I=93) has the full model's endorsement confirmed
 by independent college production evidence — delta of only +5. Both capital and
 talent signals align at the top.
 
 ### Tight End
 
-| Rank | Player | Proj B2S | ZAP | Ph1 | Delta | Risk | 80% Interval |
-|------|--------|:--------:|:---:|:---:|:-----:|:----:|:------------:|
+| Rank | Player | Proj B2S | ORBIT | Ph1 | Delta | Risk | 80% Interval |
+|------|--------|:--------:|:-----:|:---:|:-----:|:----:|:------------:|
 | 1 | Kenyon Sadiq | 12.8 | 99 | 97 | +2 | Neutral | [8.9–16.7] |
 | 2 | Eli Stowers | 10.6 | 96 | 97 | −1 | Neutral | [6.7–14.5] |
 | 3 | Max Klare | 7.3 | 83 | 73 | +9 | Neutral | [3.4–11.2] |
 
-Notable: Kenyon Sadiq (ZAP=99) generated a prior research question — how much of his
+Notable: Kenyon Sadiq (ORBIT=99) generated a prior research question — how much of his
 score is capital vs talent? The Phase I model places him at 97, meaning his top ranking
 is confirmed by independent college and athletic evidence. Both signals agree. The
 capital premium concern is resolved.
@@ -484,7 +484,7 @@ capital premium concern is resolved.
 
 The model passed every integrity test in Phase A. No Phase B or C changes were warranted
 by the evidence. The Phase D improvements implemented (conformal intervals and ranking
-metrics) are reporting enhancements only — no model coefficients, features, or ZAP
+metrics) are reporting enhancements only — no model coefficients, features, or ORBIT
 scores were changed.
 
 The research cycle's primary value is documented confidence: we can now state with

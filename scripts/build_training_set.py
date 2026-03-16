@@ -166,6 +166,7 @@ def _load_cfb(cfb_db_path: str) -> dict:
             (row.team, row.season_year): {
                 "sp_plus_rating": row.sp_plus_rating,
                 "pass_attempts": row.pass_attempts,
+                "rush_attempts": row.rush_attempts,
             }
             for row in s.query(CFBTeamSeason).all()
         }
@@ -187,8 +188,9 @@ def _load_cfb(cfb_db_path: str) -> dict:
             for sn in slist:
                 key = (sn.get("team"), sn.get("season_year"))
                 ts = team_seasons_raw.get(key, {})
-                sn["sp_plus_rating"] = ts.get("sp_plus_rating")
-                sn["team_pass_att"]  = ts.get("pass_attempts")
+                sn["sp_plus_rating"]  = ts.get("sp_plus_rating")
+                sn["team_pass_att"]   = ts.get("pass_attempts")
+                sn["team_rush_att"]   = ts.get("rush_attempts")
                 total_tds = team_rec_tds.get(key, 0)
                 player_tds = sn.get("rec_tds") or 0
                 sn["rec_td_pct"] = player_tds / total_tds if total_tds > 0 else None
@@ -383,7 +385,6 @@ def _load_nfl(nfl_db_path: str) -> dict:
         result["b2s"] = {
             (row.player_name, row.position, row.draft_year): {
                 "b2s_score": row.b2s_score,
-                "top_season_ppg": row.top_season_ppg,
                 "year1_ppg": row.year1_ppg,
                 "year2_ppg": row.year2_ppg,
                 "year3_ppg": row.year3_ppg,
@@ -548,6 +549,36 @@ def _total_yards_rate(seasons: list[dict], min_games: int = 6) -> float | None:
     return round(best, 4) if best is not None else None
 
 
+def _total_yards_rate_v2(seasons: list[dict], min_games: int = 6) -> float | None:
+    """
+    Phase D variant: denominator = team_pass_att + team_rush_att (total team plays).
+    Otherwise identical to _total_yards_rate().
+    If team_rush_att is unavailable, falls back to pass_att-only denominator.
+    """
+    best = None
+    for s in seasons:
+        if (s.get("games_played") or 0) < min_games:
+            continue
+        team_pass_att = s.get("team_pass_att")
+        if not team_pass_att or team_pass_att < 200:
+            continue
+        team_rush_att = s.get("team_rush_att") or 0
+        total_plays = team_pass_att + team_rush_att if team_rush_att else team_pass_att
+        total_yards = (s.get("rec_yards") or 0) + (s.get("rush_yards") or 0)
+        age = s.get("age_at_season_start")
+        if age is None:
+            continue
+        sp_plus = s.get("sp_plus_rating")
+        sos_mult = (
+            max(0.70, min(1.30, 1.0 + (sp_plus - 5.0) / 100.0))
+            if sp_plus is not None else 1.0
+        )
+        rate = (total_yards / total_plays) * sos_mult * max(0.0, 26.0 - age)
+        if best is None or rate > best:
+            best = rate
+    return round(best, 4) if best is not None else None
+
+
 def _compute_teammate_score(
     player_id: int,
     draft_year: int,
@@ -641,6 +672,8 @@ def _build_row(
     best_breakout_score = _breakout_score(seasons_raw, min_games=min_games)
     # Total yards rate: RB primary input ((rec+rush yds)/team_pass_att × SOS mult × age mult)
     best_total_yards_rate = _total_yards_rate(seasons_raw, min_games=min_games)
+    # Phase D variant: denominator = total team plays (pass_att + rush_att)
+    best_total_yards_rate_v2 = _total_yards_rate_v2(seasons_raw, min_games=min_games)
 
     # Best season per-play rates
     best_targets_val = best.get("targets") or 0
@@ -706,12 +739,11 @@ def _build_row(
         "match_score": link.get("match_score"),
         # Target
         "b2s_score": b2s_data.get("b2s_score"),
-        "top_season_ppg": b2s_data.get("top_season_ppg"),
         "year1_ppg": b2s_data.get("year1_ppg"),
         "year2_ppg": b2s_data.get("year2_ppg"),
         "year3_ppg": b2s_data.get("year3_ppg"),
         "qualifying_nfl_seasons": b2s_data.get("qualifying_seasons"),
-        # Best college season — core ZAP metrics
+        # Best college season — core ORBIT metrics
         "best_rec_rate": best.get("rec_yards_per_team_pass_att"),
         "best_dominator": best.get("dominator_rating"),
         "best_reception_share": best.get("reception_share"),
@@ -746,6 +778,8 @@ def _build_row(
         "best_breakout_score": best_breakout_score,
         # Total yards rate: RB primary input ((rec+rush)/team_pass_att × SOS mult × age mult)
         "best_total_yards_rate": best_total_yards_rate,
+        # Phase D variant: total team plays denominator (pass_att + rush_att)
+        "best_total_yards_rate_v2": best_total_yards_rate_v2,
         # Career totals
         "career_seasons": career_seasons,
         "career_rec_yards": career_rec_yards,
