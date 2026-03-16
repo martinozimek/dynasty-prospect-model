@@ -478,14 +478,14 @@ class ProspectViewer(tk.Tk):
                 continue
 
             players = [n.split()[-1] for n in sub["player_name"]]
-            zap = sub["orbit_score"].values
+            orbit = sub["orbit_score"].values
             ph1 = sub["phase1_orbit"].values if "phase1_orbit" in sub else None
 
             y = np.arange(len(players))
             color = POS_COLORS.get(pos, ACCENT)
 
             ax.set_facecolor(PANEL)
-            ax.barh(y, zap, height=0.55, color=color, alpha=0.85,
+            ax.barh(y, orbit, height=0.55, color=color, alpha=0.85,
                     label="ORBIT")
             if ph1 is not None and not np.all(np.isnan(ph1.astype(float))):
                 ax.scatter(ph1, y, color=GOLD, s=30, zorder=5,
@@ -600,15 +600,15 @@ class PlayerDetail(tk.Toplevel):
         self._build_charts(right, pos)
 
     def _badge_data(self):
-        zap  = self.row.get("orbit_score",   np.nan)
+        orbit = self.row.get("orbit_score",   np.nan)
         ph1  = self.row.get("phase1_orbit", np.nan)
         delt = self.row.get("capital_delta", np.nan)
         risk = self.row.get("risk", "N/A")
         risk_col = RISK_COLORS.get(risk, NEUTRAL)
 
         badges = []
-        if pd.notna(zap):
-            badges.append(("ORBIT Score", f"{zap:.0f}", ACCENT))
+        if pd.notna(orbit):
+            badges.append(("ORBIT Score", f"{orbit:.0f}", ACCENT))
         if pd.notna(ph1):
             badges.append(("Phase I", f"{ph1:.0f}", "#8e44ad"))
         if pd.notna(delt):
@@ -755,7 +755,7 @@ class PlayerDetail(tk.Toplevel):
         ax_gauge.set_ylim(0, 110)
         ax_gauge.axis("off")
 
-        zap  = self.row.get("orbit_score", np.nan)
+        orbit = self.row.get("orbit_score", np.nan)
         ph1  = self.row.get("phase1_orbit", np.nan)
         delt = self.row.get("capital_delta", np.nan)
         risk = self.row.get("risk", "N/A")
@@ -771,9 +771,9 @@ class PlayerDetail(tk.Toplevel):
             ax.text(x, y_bot - 5, label, ha="center", va="top",
                     color=SUBTEXT, fontsize=9)
 
-        if pd.notna(zap):
-            _gauge_bar(ax_gauge, -0.2, 0, float(zap),
-                       POS_COLORS.get(pos, ACCENT), "ORBIT", zap)
+        if pd.notna(orbit):
+            _gauge_bar(ax_gauge, -0.2, 0, float(orbit),
+                       POS_COLORS.get(pos, ACCENT), "ORBIT", orbit)
         if pd.notna(ph1):
             _gauge_bar(ax_gauge, 0.2, 0, float(ph1),
                        "#8e44ad", "Phase I", ph1)
