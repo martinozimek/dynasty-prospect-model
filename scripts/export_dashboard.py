@@ -233,9 +233,18 @@ def row_to_player(row: pd.Series, pos: str, dists: dict, year: int) -> dict:
             else:
                 features[col] = {"value": None, "pct": None}
 
+    # Parse seasons_json for college career table
+    raw_sj = g("seasons_json")
+    seasons = []
+    if raw_sj and isinstance(raw_sj, str):
+        try:
+            seasons = json.loads(raw_sj)
+        except Exception:
+            pass
+
     player = {
         "name": str(g("player_name", "")),
-        "college": str(g("best_team", "")),
+        "college": str(g("most_recent_team") or g("best_team", "")),
         "position": pos,
         "draft_year": year,
         "best_season_year": safe_float(g("best_season_year")),
@@ -276,6 +285,7 @@ def row_to_player(row: pd.Series, pos: str, dists: dict, year: int) -> dict:
         "breakout_imputed": safe_float(g("best_breakout_score")) is None,
         "age_suspect": (safe_float(g("best_age")) or 0) > 26 or safe_float(g("best_age")) == 18.5,
         "features": features,
+        "seasons": seasons,
     }
     return player
 
@@ -846,6 +856,25 @@ tbody td.muted { color: var(--text-muted); }
 
 .no-data { color: var(--text-dim); text-align: center; padding: 40px; font-size: 14px; }
 .empty-dash { color: var(--text-dim); }
+
+/* ── College career season table ── */
+.season-table-wrap { overflow-x: auto; margin-top: 6px; }
+.season-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.season-table thead th {
+  background: var(--surface3); color: var(--text-dim); font-weight: 600;
+  font-size: 10px; letter-spacing: 0.4px; text-transform: uppercase;
+  padding: 6px 8px; text-align: right; border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.season-table thead th:first-child,
+.season-table thead th:nth-child(2) { text-align: left; }
+.season-table tbody tr:nth-child(even) { background: rgba(255,255,255,0.02); }
+.season-table tbody td {
+  padding: 5px 8px; color: var(--text); text-align: right;
+  border-bottom: 1px solid rgba(45,49,72,0.4);
+}
+.season-table tbody td:first-child { text-align: left; font-weight: 600; }
+.season-table tbody td:nth-child(2) { text-align: left; color: var(--text-muted); }
 </style>
 </head>
 <body>
@@ -973,7 +1002,7 @@ tbody td.muted { color: var(--text-muted); }
       </div>
       <!-- Row 2: Capital Calibration -->
       <div class="chart-card">
-        <div class="chart-card-title">Draft Capital vs Actual B2S — Historical (all positions)</div>
+        <div class="chart-card-title">Draft Capital vs Actual B2S — Historical (all positions, selected highlighted)</div>
         <div class="chart-card-canvas" style="height:280px"><canvas id="analysis-cap-b2s"></canvas></div>
       </div>
     </div>
@@ -1026,6 +1055,7 @@ const state = {
   activeTab: 'rankings',
   pos: 'WR',
   year: DASHBOARD_DATA.meta.primary_year,
+  activeYears: new Set([DASHBOARD_DATA.meta.primary_year]),
   scatterPos: 'WR',
   scatterYear: DASHBOARD_DATA.meta.primary_year,
   scatterX: 'phase1_orbit',
@@ -1195,6 +1225,27 @@ function makeYearBtns(container, stateKey, onchange) {
   });
 }
 
+// Multi-select year buttons for Rankings tab
+function makeRankingsYearBtns(container) {
+  const years = DASHBOARD_DATA.meta.years || [];
+  container.innerHTML = years.map(y =>
+    `<button class="seg-btn ${state.activeYears.has(y) ? 'active' : ''}" data-year="${y}">${y}</button>`
+  ).join('');
+  container.querySelectorAll('.seg-btn').forEach(b => {
+    b.addEventListener('click', () => {
+      const yr = b.dataset.year;
+      if (state.activeYears.has(yr)) {
+        // Don't allow deselecting the last active year
+        if (state.activeYears.size > 1) state.activeYears.delete(yr);
+      } else {
+        state.activeYears.add(yr);
+      }
+      container.querySelectorAll('.seg-btn').forEach(x => x.classList.toggle('active', state.activeYears.has(x.dataset.year)));
+      renderRankingsBody();
+    });
+  });
+}
+
 // ═══════════════════════════════════════════════════════════
 // RANKINGS TAB
 // ═══════════════════════════════════════════════════════════
@@ -1202,6 +1253,7 @@ const RANK_COLS = [
   { key: 'pos_rank', label: 'Rank', fmt: v => v !== null ? `#${Math.round(v)}` : '—' },
   { key: 'name', label: 'Player', fmt: v => `<span style="font-weight:600">${v}</span>` },
   { key: 'college', label: 'College', fmt: v => v || '—' },
+  { key: 'draft_year', label: 'Class', fmt: v => v ? `<span style="color:var(--text-muted)">'${String(v).slice(-2)}</span>` : '—', multiYearOnly: true },
   { key: 'best_age', label: 'Age', fmt: v => v !== null && v !== undefined ? `<span style="color:var(--text-muted)">${Number(v).toFixed(1)}</span>` : '<span class="empty-dash">—</span>' },
   { key: 'best_breakout_score', label: 'BrkOut', fmt: v => v !== null && v !== undefined ? `<span style="color:var(--text-muted)">${Number(v).toFixed(1)}</span>` : '<span class="empty-dash">—</span>' },
   { key: '_htw', label: 'Ht / Wt', fmt: (_, r) => {
@@ -1234,8 +1286,10 @@ const RANK_COLS = [
 ];
 
 function buildRankingsHeader() {
+  const multiYear = state.activeYears.size > 1;
+  const visibleCols = RANK_COLS.filter(c => !c.multiYearOnly || multiYear);
   document.getElementById('rankings-thead').innerHTML =
-    `<tr>${RANK_COLS.map(c => `
+    `<tr>${visibleCols.map(c => `
       <th data-key="${c.key}" ${c.noSort ? '' : 'class="sortable"'}>
         ${c.label}${c.noSort ? '' : '<span class="sort-icon">↕</span>'}
       </th>`).join('')}</tr>`;
@@ -1251,7 +1305,14 @@ function buildRankingsHeader() {
 }
 
 function renderRankingsBody() {
-  let players = getPlayers(state.year, state.pos);
+  // Gather players from all active years (multi-year support)
+  const multiYear = state.activeYears.size > 1;
+  let players = [];
+  for (const yr of state.activeYears) {
+    players = players.concat(getPlayers(yr, state.pos));
+  }
+  // Rebuild header to show/hide Class column
+  buildRankingsHeader();
 
   // Search filter
   if (state.search) {
@@ -1285,10 +1346,11 @@ function renderRankingsBody() {
     return;
   }
 
+  const visibleCols = RANK_COLS.filter(c => !c.multiYearOnly || multiYear);
   tbody.innerHTML = players.map(p => {
     const isSelected = state.selectedPlayer && state.selectedPlayer.name === p.name && state.selectedPlayer.draft_year === p.draft_year;
     return `<tr class="${isSelected ? 'selected' : ''}" data-name="${p.name}" data-year="${p.draft_year}">
-      ${RANK_COLS.map(c => {
+      ${visibleCols.map(c => {
         let html;
         if (c.fmt.length >= 2) html = c.fmt(p[c.key], p);
         else html = c.fmt(p[c.key]);
@@ -1319,8 +1381,8 @@ function initRankings() {
     });
   });
 
-  // Year buttons
-  makeYearBtns(document.getElementById('year-btns'), 'year', renderRankingsBody);
+  // Year buttons (multi-select for rankings)
+  makeRankingsYearBtns(document.getElementById('year-btns'));
 
   // Search
   document.getElementById('search-box').addEventListener('input', e => {
@@ -1446,6 +1508,36 @@ function renderPlayerPanel(p) {
     ${physItem('3-Cone', p.three_cone !== null ? `${fmt(p.three_cone, 2)}s` : '—')}
     ${physItem('Shuttle', p.shuttle !== null ? `${fmt(p.shuttle, 2)}s` : '—')}
   </div>`;
+
+  // College career season table
+  if (p.seasons && p.seasons.length > 0) {
+    const isRB = pos === 'RB';
+    const showPFF = !isRB;
+    html += `<div class="section-title">College Career</div>
+    <div class="season-table-wrap">
+      <table class="season-table">
+        <thead><tr>
+          <th>Year</th><th>Team</th><th>G</th>
+          <th>Rec</th><th>Tgt</th><th>RecYd</th><th>RecTD</th>
+          ${isRB ? '<th>Att</th><th>RuYd</th><th>RuTD</th>' : ''}
+          ${showPFF ? '<th>YPRR</th><th>Gr</th>' : ''}
+        </tr></thead>
+        <tbody>
+          ${p.seasons.map(s => `<tr>
+            <td>${s.year}</td>
+            <td>${s.team || '—'}</td>
+            <td>${s.games != null ? s.games : '—'}</td>
+            <td>${s.receptions != null ? s.receptions : '—'}</td>
+            <td>${s.targets != null ? s.targets : '—'}</td>
+            <td>${s.rec_yards != null ? s.rec_yards : '—'}</td>
+            <td>${s.rec_tds != null ? s.rec_tds : '—'}</td>
+            ${isRB ? `<td>${s.rush_attempts != null ? s.rush_attempts : '—'}</td><td>${s.rush_yards != null ? s.rush_yards : '—'}</td><td>${s.rush_tds != null ? s.rush_tds : '—'}</td>` : ''}
+            ${showPFF ? `<td>${s.yprr != null ? Number(s.yprr).toFixed(2) : '—'}</td><td>${s.receiving_grade != null ? Math.round(s.receiving_grade) : '—'}</td>` : ''}
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+  }
 
   // Capital model features
   if (capFeatures.length > 0) {
@@ -1837,11 +1929,21 @@ function renderAnalysis() {
         const age = f && typeof f === 'object' ? f.value : (typeof f === 'number' ? f : null);
         return age !== null ? { x: age, y: p.b2s_score, name: p.name, draft_year: p.draft_year } : null;
       })
-      .filter(Boolean);
-    // Overlay 2026 prospects
+      .filter(pt => pt !== null && pt.x >= 18 && pt.x <= 30);
+
+    // Overlay current-year prospects (triangles at y=0)
     const futurePts = currentPlayers
-      .filter(p => p.best_age !== null)
-      .map(p => ({ x: p.best_age, y: null, name: p.name, orbit: p.orbit_score }));
+      .filter(p => p.best_age !== null && p.best_age >= 18 && p.best_age <= 30)
+      .map(p => ({ x: p.best_age, y: null, name: p.name, orbit: p.orbit_score, fullPlayer: p }));
+
+    // F4b: empty-state when no historical data loaded
+    if (histPts.length === 0 && futurePts.length === 0) {
+      const ctx1 = c1.getContext('2d');
+      ctx1.font = '13px Inter, sans-serif';
+      ctx1.fillStyle = '#64748b';
+      ctx1.textAlign = 'center';
+      ctx1.fillText('Rebuild with --include-historical to show historical B2S data', c1.width / 2, c1.height / 2);
+    }
 
     const ols = olsLine(histPts);
     const datasets = [
@@ -1857,7 +1959,7 @@ function renderAnalysis() {
       const xs = histPts.map(p => p.x);
       const xMin = Math.min(...xs), xMax = Math.max(...xs);
       datasets.push({
-        label: 'OLS trend',
+        label: 'Trend line',
         data: [{ x: xMin, y: ols.slope * xMin + ols.intercept }, { x: xMax, y: ols.slope * xMax + ols.intercept }],
         type: 'line', borderColor: 'rgba(255,255,255,0.25)', borderDash: [5, 4],
         borderWidth: 1.5, pointRadius: 0, fill: false, datalabels: { display: false },
@@ -1906,6 +2008,19 @@ function renderAnalysis() {
           },
           datalabels: { display: false },
         },
+        onClick: (evt, items) => {
+          if (!items.length) return;
+          const item = items[0];
+          const raw = state.analysisCharts.ageb2s.data.datasets[item.datasetIndex].data[item.index];
+          if (!raw || !raw.player) return;
+          const p = raw.player;
+          if (p.fullPlayer) {
+            openPlayerPanel(p.fullPlayer);
+          } else if (p.name && p.draft_year) {
+            const found = getHistorical(pos).find(h => h.name === p.name && h.draft_year === p.draft_year);
+            if (found) openPlayerPanel(found);
+          }
+        },
         scales: {
           x: { title: { display: true, text: 'Draft Age', color: axisTitleColor, font: { size: 11 } }, grid: { color: darkGrid }, ticks: { color: tickColor } },
           y: { title: { display: true, text: 'Actual B2S PPG', color: axisTitleColor, font: { size: 11 } }, grid: { color: darkGrid }, ticks: { color: tickColor } },
@@ -1949,7 +2064,7 @@ function renderAnalysis() {
       const xs2 = pts2.map(p => p.x);
       const xMin2 = Math.min(...xs2), xMax2 = Math.max(...xs2);
       ds2.push({
-        label: 'OLS trend',
+        label: 'Trend line',
         data: [{ x: xMin2, y: ols2.slope * xMin2 + ols2.intercept }, { x: xMax2, y: ols2.slope * xMax2 + ols2.intercept }],
         type: 'line', borderColor: 'rgba(255,255,255,0.2)', borderDash: [5, 4],
         borderWidth: 1.5, pointRadius: 0, fill: false, datalabels: { display: false },
@@ -1975,6 +2090,12 @@ function renderAnalysis() {
           },
           datalabels: { display: false },
         },
+        onClick: (evt, items) => {
+          if (!items.length) return;
+          const item = items[0];
+          const raw = state.analysisCharts.orbitRank.data.datasets[item.datasetIndex].data[item.index];
+          if (raw && raw.player) openPlayerPanel(raw.player);
+        },
         scales: {
           x: { title: { display: true, text: 'Position Rank (Big Board)', color: axisTitleColor, font: { size: 11 } }, grid: { color: darkGrid }, ticks: { color: tickColor } },
           y: { title: { display: true, text: 'ORBIT Score', color: axisTitleColor, font: { size: 11 } }, grid: { color: darkGrid }, ticks: { color: tickColor } },
@@ -1994,8 +2115,11 @@ function renderAnalysis() {
     const ds3 = ['WR', 'RB', 'TE'].map(p => ({
       label: p,
       data: allHist.filter(h => h.pos === p),
-      backgroundColor: posColors[p] || 'rgba(148,163,184,0.5)',
-      pointRadius: 4, pointHoverRadius: 7,
+      // F4d: dim non-selected positions; full opacity for selected
+      backgroundColor: p === pos
+        ? (posColors[p] || 'rgba(148,163,184,0.5)')
+        : 'rgba(100,116,139,0.15)',
+      pointRadius: p === pos ? 4 : 3, pointHoverRadius: 7,
       datalabels: { display: false },
     }));
     const olsAll = olsLine(allHist.map(h => ({ x: h.x, y: h.y })));
@@ -2003,7 +2127,7 @@ function renderAnalysis() {
       const caps = allHist.map(h => h.x);
       const capMin = Math.min(...caps), capMax = Math.max(...caps);
       ds3.push({
-        label: 'OLS (all)',
+        label: 'Trend line',
         data: [{ x: capMin, y: olsAll.slope * capMin + olsAll.intercept }, { x: capMax, y: olsAll.slope * capMax + olsAll.intercept }],
         type: 'line', borderColor: 'rgba(255,255,255,0.35)', borderDash: [5, 4],
         borderWidth: 2, pointRadius: 0, fill: false, datalabels: { display: false },

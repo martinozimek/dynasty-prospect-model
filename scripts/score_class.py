@@ -639,6 +639,10 @@ def _build_prospect_row(
     best_team = best.get("team")
     best_team_season = cfb["team_seasons"].get((best_team, best.get("season_year")), {})
 
+    # Most recent season by year (display-only — not used in model features)
+    most_recent_s = max(seasons_raw, key=lambda s: s.get("season_year") or 0) if seasons_raw else {}
+    most_recent_team = most_recent_s.get("team") or best_team
+
     combine = cfb["combine"].get(player_id, {})
     recruiting = cfb["recruiting"].get(player_id, {})
     recruit_year: int | None = recruiting.get("recruit_year")
@@ -721,11 +725,36 @@ def _build_prospect_row(
         draft_year,
     )
 
+    # Build seasons display JSON (display-only — shown in player panel)
+    seasons_display = []
+    for s in sorted(seasons_raw, key=lambda x: x.get("season_year") or 0):
+        yr = s.get("season_year")
+        if not yr:
+            continue
+        seasons_display.append({
+            "year": yr,
+            "team": s.get("team", ""),
+            "games": s.get("games_played"),
+            "rec_yards": s.get("rec_yards"),
+            "receptions": s.get("receptions"),
+            "targets": s.get("targets"),
+            "rec_tds": s.get("rec_tds"),
+            "rush_yards": s.get("rush_yards"),
+            "rush_attempts": s.get("rush_attempts"),
+            "rush_tds": s.get("rush_tds"),
+            "yprr": s.get("yprr"),
+            "routes_per_game": s.get("routes_per_game"),
+            "receiving_grade": s.get("receiving_grade"),
+            "rec_rate": s.get("rec_yards_per_team_pass_att"),
+        })
+    seasons_json_str = json.dumps(seasons_display)
+
     return {
         # Identity
         "player_name": player["full_name"],
         "position": position,
         "best_team": best_team,
+        "most_recent_team": most_recent_team,
         "best_season_year": best.get("season_year"),
         "declared_draft_year": draft_year,
         # College
@@ -812,6 +841,8 @@ def _build_prospect_row(
         "best_man_yprr": best.get("man_yprr"),
         "best_zone_yprr": best.get("zone_yprr"),
         "best_man_zone_delta": best.get("man_zone_delta"),
+        # Display-only fields (not used in model)
+        "seasons_json": seasons_json_str,
     }
 
 
@@ -860,9 +891,9 @@ def score_position(
 
     # Cast all non-identity columns to numeric (prospect rows may have Python None
     # which creates object-dtype Series, causing np.log / clip to fail)
-    _id_cols = {"player_name", "position", "best_team", "model", "post_draft",
-                "declared_draft_year", "draft_year", "best_season_year",
-                "capital_is_projected"}
+    _id_cols = {"player_name", "position", "best_team", "most_recent_team",
+                "model", "post_draft", "declared_draft_year", "draft_year",
+                "best_season_year", "capital_is_projected", "seasons_json"}
     for col in df.columns:
         if col not in _id_cols:
             df[col] = pd.to_numeric(df[col], errors="coerce")
@@ -873,6 +904,21 @@ def score_position(
     for f in features:
         if f not in df_eng.columns:
             df_eng[f] = np.nan
+
+    # B4: Pre-fill production/efficiency features to 0 at inference time.
+    # For prospects with no qualifying seasons (JUCO/FCS transfers, limited data),
+    # these should be 0 (no production measured), NOT imputed to training median.
+    # Does not affect training — only changes what goes into the pipeline at scoring time.
+    PRODUCTION_FEATS = {
+        'best_breakout_score', 'best_yprr', 'best_rec_rate', 'best_routes_per_game',
+        'best_man_yprr', 'best_zone_yprr', 'best_slot_yprr', 'best_deep_yprr',
+        'best_deep_target_rate', 'best_man_zone_delta', 'best_drop_rate',
+        'best_total_yards_rate', 'best_dominator', 'best_usage_pass',
+        'best_rush_ypc', 'best_receiving_grade',
+    }
+    for f in features:
+        if f in PRODUCTION_FEATS and f in df_eng.columns:
+            df_eng[f] = df_eng[f].fillna(0)
 
     X     = df_eng[features].values
     preds = np.clip(pipeline.predict(X), 0, None)
@@ -897,7 +943,7 @@ def score_position(
         q80 = q90 = float("nan")
 
     keep_cols = [c for c in [
-        "player_name", "position", "best_team", "best_season_year",
+        "player_name", "position", "best_team", "most_recent_team", "best_season_year",
         # Production
         "best_dominator", "best_rec_rate", "college_fantasy_ppg",
         "breakout_age", "best_age", "best_breakout_score",
@@ -918,6 +964,7 @@ def score_position(
         # Draft / board
         "consensus_rank", "position_rank",
         "draft_capital_score", "overall_pick", "capital_is_projected",
+        "seasons_json",
     ] if c in df.columns]
 
     result = df[keep_cols].copy()
