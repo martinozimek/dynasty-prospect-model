@@ -64,10 +64,13 @@ _ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(Path(__file__).parent))  # for analyze.py imports
 
-from analyze import engineer_features, load_training
+from analyze import engineer_features, load_training, QuantileClipper
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
+
+# QuantileClipper is imported from analyze.py so that both fit_model.py and
+# score_class.py resolve the same class when loading pickled Phase I models.
 
 logging.basicConfig(
     level=logging.INFO,
@@ -243,8 +246,8 @@ _CANDIDATE_FEATURES_NOCAP = {
         "best_deep_yprr",
         "best_deep_target_rate",
         "best_drop_rate",
-        # Athleticism
-        "speed_score",
+        # Athleticism — speed_score excluded per JJ (not predictive for WRs;
+        # amplifies inflated Phase I scores when breakout_score is NaN — B2 fix)
         "forty_time",
         "broad_jump",
         "vertical_jump",
@@ -406,6 +409,7 @@ def _loyo_cv(
     lgbm_params: dict | None = None,
     alpha_range: np.ndarray | None = None,       # Step 4/7b: per-position Ridge alpha range
     feature_candidates: list[str] | None = None, # Step 3: nested Lasso per fold
+    clip_outliers: bool = False,                 # B3: add QuantileClipper to ridge pipeline
 ) -> dict:
     """
     Leave-One-Year-Out cross-validation.
@@ -451,18 +455,15 @@ def _loyo_cv(
         y_test  = test_sub[target].values
 
         if model_type == "ridge":
+            _steps = [("imp", SimpleImputer(strategy="median"))]
+            if clip_outliers:
+                _steps.append(("clip99", QuantileClipper(upper_quantile=0.99)))
+            _steps.append(("scl", StandardScaler()))
             if alpha_range is not None:
-                pipe = Pipeline([
-                    ("imp", SimpleImputer(strategy="median")),
-                    ("scl", StandardScaler()),
-                    ("mdl", RidgeCV(alphas=alpha_range, cv=5)),
-                ])
+                _steps.append(("mdl", RidgeCV(alphas=alpha_range, cv=5)))
             else:
-                pipe = Pipeline([
-                    ("imp", SimpleImputer(strategy="median")),
-                    ("scl", StandardScaler()),
-                    ("mdl", Ridge(alpha=10.0)),
-                ])
+                _steps.append(("mdl", Ridge(alpha=10.0)))
+            pipe = Pipeline(_steps)
         else:
             mc = [_MONOTONE_DIRECTIONS.get(f, 0) for f in used]
             params = lgbm_params or {}
@@ -705,6 +706,7 @@ def fit_position(
     cv_strategy: str = "loyo",  # Step 7c: loyo | rolling | kfold
     feature_candidates: list[str] | None = None,   # Phase I: override candidate pool
     model_suffix: str = "",                         # Phase I: "_nocap" appended to artifact names
+    clip_outliers: bool = False,                    # B3: QuantileClipper in Phase I pipeline
 ) -> dict:
     """
     Full training pipeline for one position.
@@ -755,6 +757,7 @@ def fit_position(
         # Using outer-selected features is honest: removes ~0.002 selection bias
         # (confirmed in Section 6 diagnostics) without injecting noise.
         feature_candidates=selected,
+        clip_outliers=clip_outliers,  # B3: Phase I only
     )
     log.info(
         "  Ridge LOYO: R²=%.3f  MAE=%.2f  RMSE=%.2f  [nested_lasso+RidgeCV]",
@@ -784,14 +787,18 @@ def fit_position(
 
     # --- Final Ridge pipeline — RidgeCV selects alpha on all training data ---
     log.info("  Fitting final Ridge with RidgeCV (alpha tuning on full training set)...")
-    ridge_pipe = Pipeline([
-        ("imp", SimpleImputer(strategy="median")),
+    _final_steps = [("imp", SimpleImputer(strategy="median"))]
+    if clip_outliers:
+        _final_steps.append(("clip99", QuantileClipper(upper_quantile=0.99)))
+        log.info("  QuantileClipper(99th pct) enabled — Phase I outlier guard")
+    _final_steps.extend([
         ("scl", StandardScaler()),
         ("mdl", RidgeCV(
             alphas=alpha_range if alpha_range is not None else np.logspace(-1, 3, 50),
             cv=5,
         )),
     ])
+    ridge_pipe = Pipeline(_final_steps)
     ridge_pipe.fit(df[selected].values, y_full.values)
     ridge_alpha      = float(ridge_pipe.named_steps["mdl"].alpha_)
     ridge_r2_train   = float(ridge_pipe.score(df[selected].values, y_full.values))
@@ -967,6 +974,7 @@ def main() -> None:
             cv_strategy=args.cv_strategy,
             feature_candidates=_CANDIDATE_FEATURES_NOCAP[pos] if no_capital else None,
             model_suffix=model_suffix,
+            clip_outliers=no_capital,  # B3: QuantileClipper for Phase I only
         )
         all_meta[pos] = meta
 
@@ -984,10 +992,18 @@ def main() -> None:
             if rc or kc else "",
         )
 
-    # Write aggregate metadata
+    # Write aggregate metadata — merge with existing file so a single-position run
+    # (e.g. --position RB) doesn't clobber WR/TE keys written by a previous run.
     meta_path = models_dir / f"metadata{model_suffix}.json"
     models_dir.mkdir(parents=True, exist_ok=True)
-    meta_path.write_text(json.dumps(all_meta, indent=2, default=str))
+    existing_meta: dict = {}
+    if meta_path.exists():
+        try:
+            existing_meta = json.loads(meta_path.read_text())
+        except Exception as exc:
+            log.warning("Could not load existing metadata (will overwrite): %s", exc)
+    existing_meta.update(all_meta)
+    meta_path.write_text(json.dumps(existing_meta, indent=2, default=str))
     log.info("Metadata saved: %s", meta_path)
 
     # Summary table

@@ -259,6 +259,9 @@ def row_to_player(row: pd.Series, pos: str, dists: dict, year: int) -> dict:
         "capital_delta": safe_float(g("capital_delta")),
         "risk": str(g("risk", "")) if g("risk") is not None else None,
         "b2s_score": None,  # future class — no actual outcome
+        # Top-level convenience fields for table sorting (also in features dict)
+        "best_age": safe_float(g("best_age")),
+        "best_breakout_score": safe_float(g("best_breakout_score")),
         "features": features,
     }
     return player
@@ -437,6 +440,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -723,6 +727,29 @@ tbody td.muted { color: var(--text-muted); }
   font-size: 12px; line-height: 1.6;
 }
 
+/* ── Analysis tab ── */
+.analysis-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.analysis-grid.triple { grid-template-columns: 1fr 1fr 1fr; }
+.chart-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px; padding: 16px;
+}
+.chart-card-title {
+  font-size: 13px; font-weight: 700; color: var(--text-muted);
+  margin-bottom: 12px; letter-spacing: 0.3px;
+}
+.chart-card-canvas { height: 320px; position: relative; }
+.analysis-no-data { color: var(--text-dim); text-align: center; padding: 40px; font-size: 13px; }
+
+/* ── Scatter axis selects ── */
+.axis-select-wrap { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-muted); }
+.axis-select {
+  background: var(--surface2); border: 1px solid var(--border);
+  color: var(--text); font-size: 12px; font-family: inherit;
+  padding: 5px 10px; border-radius: 6px; cursor: pointer; outline: none;
+}
+.axis-select:focus { border-color: var(--accent); }
+
 /* ── Scrollbar ── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -754,6 +781,7 @@ tbody td.muted { color: var(--text-muted); }
     <button class="tab-btn active" data-tab="rankings">Rankings</button>
     <button class="tab-btn" data-tab="scatter">Scatter Plot</button>
     <button class="tab-btn" data-tab="historical">Historical</button>
+    <button class="tab-btn" data-tab="analysis">Analysis</button>
     <button class="tab-btn" data-tab="about">About</button>
   </div>
 
@@ -787,6 +815,35 @@ tbody td.muted { color: var(--text-muted); }
           <button class="seg-btn" data-pos="TE">TE</button>
         </div>
         <div class="year-btn-group" id="scatter-year-btns"></div>
+        <div class="controls-spacer"></div>
+        <div class="axis-select-wrap">
+          <span>X:</span>
+          <select class="axis-select" id="scatter-x-select">
+            <option value="phase1_orbit">Phase I ORBIT</option>
+            <option value="orbit_score">ORBIT Score</option>
+            <option value="capital_delta">Capital Δ</option>
+            <option value="projected_b2s">Proj B2S</option>
+            <option value="draft_capital_score">Draft Capital</option>
+            <option value="position_rank">Pos Rank</option>
+            <option value="best_age">Draft Age</option>
+            <option value="best_breakout_score">Breakout Score</option>
+            <option value="best_rec_rate">Reception Rate</option>
+            <option value="best_yprr">YPRR</option>
+          </select>
+          <span>Y:</span>
+          <select class="axis-select" id="scatter-y-select">
+            <option value="orbit_score">ORBIT Score</option>
+            <option value="phase1_orbit">Phase I ORBIT</option>
+            <option value="capital_delta">Capital Δ</option>
+            <option value="projected_b2s">Proj B2S</option>
+            <option value="draft_capital_score">Draft Capital</option>
+            <option value="position_rank">Pos Rank</option>
+            <option value="best_age">Draft Age</option>
+            <option value="best_breakout_score">Breakout Score</option>
+            <option value="best_rec_rate">Reception Rate</option>
+            <option value="best_yprr">YPRR</option>
+          </select>
+        </div>
       </div>
       <div id="scatter-canvas-wrap">
         <canvas id="scatter-canvas"></canvas>
@@ -808,6 +865,34 @@ tbody td.muted { color: var(--text-muted); }
           <thead id="hist-thead"></thead>
           <tbody id="hist-tbody"></tbody>
         </table>
+      </div>
+    </div>
+
+    <!-- ── Analysis Tab ── -->
+    <div id="tab-analysis" class="tab-content">
+      <div class="controls" style="margin-bottom:16px">
+        <div class="pos-btn-group" id="analysis-pos-btns">
+          <button class="seg-btn active" data-pos="WR">WR</button>
+          <button class="seg-btn" data-pos="RB">RB</button>
+          <button class="seg-btn" data-pos="TE">TE</button>
+        </div>
+        <div class="year-btn-group" id="analysis-year-btns"></div>
+      </div>
+      <!-- Row 1: Breakout Age vs B2S | ORBIT vs Pos Rank -->
+      <div class="analysis-grid" style="margin-bottom:20px">
+        <div class="chart-card">
+          <div class="chart-card-title">Breakout Age vs B2S — Historical</div>
+          <div class="chart-card-canvas"><canvas id="analysis-age-b2s"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-card-title">ORBIT Score vs Position Rank — Current Class</div>
+          <div class="chart-card-canvas"><canvas id="analysis-orbit-rank"></canvas></div>
+        </div>
+      </div>
+      <!-- Row 2: Capital Calibration -->
+      <div class="chart-card">
+        <div class="chart-card-title">Draft Capital vs Actual B2S — Historical (all positions)</div>
+        <div class="chart-card-canvas" style="height:280px"><canvas id="analysis-cap-b2s"></canvas></div>
       </div>
     </div>
 
@@ -861,12 +946,17 @@ const state = {
   year: DASHBOARD_DATA.meta.primary_year,
   scatterPos: 'WR',
   scatterYear: DASHBOARD_DATA.meta.primary_year,
+  scatterX: 'phase1_orbit',
+  scatterY: 'orbit_score',
   histPos: 'WR',
+  analysisPos: 'WR',
+  analysisYear: DASHBOARD_DATA.meta.primary_year,
   sortCol: 'pos_rank',
   sortDir: 1,
   search: '',
   selectedPlayer: null,
   scatterChart: null,
+  analysisCharts: {},
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -875,6 +965,32 @@ const state = {
 const FL = DASHBOARD_DATA.feature_labels || {};
 const INVERSE = new Set(DASHBOARD_DATA.inverse_features || []);
 const BINARY = new Set(DASHBOARD_DATA.binary_features || []);
+
+// Register datalabels plugin (only used in scatter/analysis charts — opt-in per chart)
+if (typeof ChartDataLabels !== 'undefined') {
+  Chart.register(ChartDataLabels);
+}
+
+// Axis accessor: resolves top-level player fields OR nested features[key].value
+function axisValue(player, key) {
+  if (player[key] !== null && player[key] !== undefined) return player[key];
+  const f = (player.features || {})[key];
+  if (f && typeof f === 'object' && f.value !== null && f.value !== undefined) return f.value;
+  return null;
+}
+
+const AXIS_LABELS = {
+  phase1_orbit: 'Phase I ORBIT (Talent Only)',
+  orbit_score: 'ORBIT Score (Full Model)',
+  capital_delta: 'Capital Δ (ORBIT − Phase I)',
+  projected_b2s: 'Projected B2S PPG',
+  draft_capital_score: 'Draft Capital Score',
+  position_rank: 'Position Rank (Big Board)',
+  best_age: 'Draft Age',
+  best_breakout_score: 'Breakout Score',
+  best_rec_rate: 'Reception Rate',
+  best_yprr: 'YPRR',
+};
 
 function fmt(v, decimals=1, suffix='') {
   if (v === null || v === undefined || (typeof v === 'number' && isNaN(v))) return '—';
@@ -972,6 +1088,7 @@ function switchTab(tabId) {
   document.querySelectorAll('.tab-content').forEach(el => el.classList.toggle('active', el.id === `tab-${tabId}`));
   if (tabId === 'scatter') renderScatter();
   if (tabId === 'historical') renderHistorical();
+  if (tabId === 'analysis') renderAnalysis();
   if (tabId === 'about') renderAbout();
 }
 
@@ -1003,6 +1120,8 @@ const RANK_COLS = [
   { key: 'pos_rank', label: 'Rank', fmt: v => v !== null ? `#${Math.round(v)}` : '—' },
   { key: 'name', label: 'Player', fmt: v => `<span style="font-weight:600">${v}</span>` },
   { key: 'college', label: 'College', fmt: v => v || '—' },
+  { key: 'best_age', label: 'Age', fmt: v => v !== null && v !== undefined ? `<span style="color:var(--text-muted)">${Number(v).toFixed(1)}</span>` : '<span class="empty-dash">—</span>' },
+  { key: 'best_breakout_score', label: 'BrkOut', fmt: v => v !== null && v !== undefined ? `<span style="color:var(--text-muted)">${Number(v).toFixed(1)}</span>` : '<span class="empty-dash">—</span>' },
   { key: '_htw', label: 'Ht / Wt', fmt: (_, r) => {
       const h = r.height_inches !== null ? fmtHeight(r.height_inches) : '—';
       const w = r.weight_lbs !== null ? `${Math.round(r.weight_lbs)} lbs` : '—';
@@ -1324,15 +1443,27 @@ function featRow(feature, player, pos) {
 function renderScatter() {
   const players = getPlayers(state.scatterYear, state.scatterPos);
   const canvas = document.getElementById('scatter-canvas');
+  const xKey = state.scatterX;
+  const yKey = state.scatterY;
 
-  // Filter players with both scores
-  const pts = players.filter(p => p.orbit_score !== null && p.phase1_orbit !== null);
+  // Filter players with both selected axis values (C1 null safety + C4 configurable)
+  const pts = players.filter(p => axisValue(p, xKey) !== null && axisValue(p, yKey) !== null);
 
-  const colorMap = { 'Low Risk': '#22c55e', 'Neutral': '#94a3b8', 'High Risk': '#ef4444', null: '#64748b' };
+  // C1: Guard — need ≥2 points to render
+  if (pts.length < 2) {
+    if (state.scatterChart) { state.scatterChart.destroy(); state.scatterChart = null; }
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.font = '14px Inter, sans-serif';
+    ctx.fillStyle = '#64748b';
+    ctx.textAlign = 'center';
+    ctx.fillText('Not enough data to render scatter (need ≥2 players with both values)', canvas.width / 2, canvas.height / 2);
+    return;
+  }
 
   const datasets = [{
     label: 'Prospects',
-    data: pts.map(p => ({ x: p.phase1_orbit, y: p.orbit_score, player: p })),
+    data: pts.map(p => ({ x: axisValue(p, xKey), y: axisValue(p, yKey), player: p })),
     backgroundColor: pts.map(p => {
       const r = p.risk || '';
       if (r.includes('Low')) return 'rgba(34,197,94,0.75)';
@@ -1341,21 +1472,49 @@ function renderScatter() {
     }),
     pointRadius: 7,
     pointHoverRadius: 10,
+    // C3: datalabels — show last name for interesting players only
+    datalabels: {
+      display: ctx => {
+        const p = ctx.dataset.data[ctx.dataIndex].player;
+        if (!p) return false;
+        const orbit = p.orbit_score;
+        const delta = p.capital_delta;
+        return (orbit !== null && orbit >= 70) || (delta !== null && Math.abs(delta) >= 25);
+      },
+      formatter: (val, ctx) => {
+        const p = ctx.dataset.data[ctx.dataIndex].player;
+        if (!p) return '';
+        const parts = p.name.split(' ');
+        return parts[parts.length - 1]; // last name
+      },
+      font: { size: 8, family: 'Inter, sans-serif' },
+      color: '#94a3b8',
+      anchor: 'end',
+      align: 'right',
+      offset: 3,
+      clamp: true,
+    },
   }];
 
-  // Diagonal line
-  const minV = Math.min(...pts.map(p => Math.min(p.phase1_orbit, p.orbit_score)), 0);
-  const maxV = Math.max(...pts.map(p => Math.max(p.phase1_orbit, p.orbit_score)), 100);
-  datasets.push({
-    label: 'y=x line',
-    data: [{ x: minV, y: minV }, { x: maxV, y: maxV }],
-    type: 'line',
-    borderColor: 'rgba(255,255,255,0.2)',
-    borderDash: [6, 4],
-    borderWidth: 1.5,
-    pointRadius: 0,
-    fill: false,
-  });
+  // Diagonal/reference line (only for same-axis defaults — orbit vs phase1)
+  const isDefaultAxes = (xKey === 'phase1_orbit' && yKey === 'orbit_score') ||
+                        (xKey === 'orbit_score' && yKey === 'phase1_orbit');
+  if (isDefaultAxes) {
+    const allVals = pts.flatMap(p => [axisValue(p, xKey), axisValue(p, yKey)]).filter(v => v !== null);
+    const minV = Math.min(...allVals, 0);
+    const maxV = Math.max(...allVals, 100);
+    datasets.push({
+      label: 'y=x line',
+      data: [{ x: minV, y: minV }, { x: maxV, y: maxV }],
+      type: 'line',
+      borderColor: 'rgba(255,255,255,0.2)',
+      borderDash: [6, 4],
+      borderWidth: 1.5,
+      pointRadius: 0,
+      fill: false,
+      datalabels: { display: false },
+    });
+  }
 
   if (state.scatterChart) {
     state.scatterChart.destroy();
@@ -1375,7 +1534,16 @@ function renderScatter() {
             label: ctx => {
               const p = ctx.raw.player;
               if (!p) return '';
-              return [`${p.name} (${p.college})`, `ORBIT: ${Math.round(p.orbit_score)}  Ph1: ${Math.round(p.phase1_orbit)}  Δ: ${p.capital_delta !== null ? Number(p.capital_delta).toFixed(1) : '—'}`, `Risk: ${p.risk || '—'}`];
+              const xv = axisValue(p, xKey);
+              const yv = axisValue(p, yKey);
+              const xLabel = AXIS_LABELS[xKey] || xKey;
+              const yLabel = AXIS_LABELS[yKey] || yKey;
+              return [
+                `${p.name} (${p.college})`,
+                `${xLabel}: ${xv !== null ? Number(xv).toFixed(1) : '—'}`,
+                `${yLabel}: ${yv !== null ? Number(yv).toFixed(1) : '—'}`,
+                `Risk: ${p.risk || '—'}`,
+              ];
             },
           },
           backgroundColor: 'rgba(26,29,39,0.97)',
@@ -1383,15 +1551,16 @@ function renderScatter() {
           titleColor: '#e2e8f0', bodyColor: '#94a3b8',
           padding: 12,
         },
+        datalabels: { display: false }, // default off; per-dataset above overrides
       },
       scales: {
         x: {
-          title: { display: true, text: 'Phase I ORBIT (Talent Only)', color: '#94a3b8', font: { size: 12 } },
+          title: { display: true, text: AXIS_LABELS[xKey] || xKey, color: '#94a3b8', font: { size: 12 } },
           grid: { color: 'rgba(45,49,72,0.5)' },
           ticks: { color: '#64748b' },
         },
         y: {
-          title: { display: true, text: 'ORBIT Score (Full Model)', color: '#94a3b8', font: { size: 12 } },
+          title: { display: true, text: AXIS_LABELS[yKey] || yKey, color: '#94a3b8', font: { size: 12 } },
           grid: { color: 'rgba(45,49,72,0.5)' },
           ticks: { color: '#64748b' },
         },
@@ -1416,6 +1585,18 @@ function initScatter() {
     });
   });
   makeYearBtns(document.getElementById('scatter-year-btns'), 'scatterYear', renderScatter);
+
+  // C4: axis selectors
+  const xSel = document.getElementById('scatter-x-select');
+  const ySel = document.getElementById('scatter-y-select');
+  if (xSel) {
+    xSel.value = state.scatterX;
+    xSel.addEventListener('change', () => { state.scatterX = xSel.value; renderScatter(); });
+  }
+  if (ySel) {
+    ySel.value = state.scatterY;
+    ySel.addEventListener('change', () => { state.scatterY = ySel.value; renderScatter(); });
+  }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1468,6 +1649,272 @@ function initHistorical() {
 }
 
 // ═══════════════════════════════════════════════════════════
+// ANALYSIS TAB
+// ═══════════════════════════════════════════════════════════
+
+function olsLine(pts) {
+  // Returns { slope, intercept } for OLS regression through array of {x,y} points
+  const n = pts.length;
+  if (n < 2) return null;
+  const xBar = pts.reduce((s, p) => s + p.x, 0) / n;
+  const yBar = pts.reduce((s, p) => s + p.y, 0) / n;
+  const ssXX = pts.reduce((s, p) => s + (p.x - xBar) ** 2, 0);
+  if (ssXX === 0) return null;
+  const slope = pts.reduce((s, p) => s + (p.x - xBar) * (p.y - yBar), 0) / ssXX;
+  const intercept = yBar - slope * xBar;
+  return { slope, intercept };
+}
+
+function destroyAnalysisCharts() {
+  for (const key of Object.keys(state.analysisCharts)) {
+    try { state.analysisCharts[key].destroy(); } catch(_) {}
+  }
+  state.analysisCharts = {};
+}
+
+function renderAnalysis() {
+  destroyAnalysisCharts();
+  const pos = state.analysisPos;
+  const year = state.analysisYear;
+  const hist = getHistorical(pos);
+  const currentPlayers = getPlayers(year, pos);
+
+  const darkGrid = 'rgba(45,49,72,0.5)';
+  const tickColor = '#64748b';
+  const axisTitleColor = '#94a3b8';
+  const posColors = { WR: 'rgba(79,156,249,0.7)', RB: 'rgba(34,197,94,0.7)', TE: 'rgba(245,158,11,0.7)' };
+  const posColor = posColors[pos] || 'rgba(148,163,184,0.65)';
+
+  // ── Chart 1: Breakout Age vs B2S (historical) ───────────────────────────────
+  const c1 = document.getElementById('analysis-age-b2s');
+  if (c1) {
+    const histPts = hist
+      .filter(p => p.b2s_score !== null)
+      .map(p => {
+        const f = (p.features || {}).best_age;
+        const age = f && typeof f === 'object' ? f.value : (typeof f === 'number' ? f : null);
+        return age !== null ? { x: age, y: p.b2s_score, name: p.name, draft_year: p.draft_year } : null;
+      })
+      .filter(Boolean);
+    // Overlay 2026 prospects
+    const futurePts = currentPlayers
+      .filter(p => p.best_age !== null)
+      .map(p => ({ x: p.best_age, y: null, name: p.name, orbit: p.orbit_score }));
+
+    const ols = olsLine(histPts);
+    const datasets = [
+      {
+        label: 'Historical',
+        data: histPts.map(p => ({ x: p.x, y: p.y, player: p })),
+        backgroundColor: posColor,
+        pointRadius: 5, pointHoverRadius: 8,
+        datalabels: { display: false },
+      },
+    ];
+    if (ols) {
+      const xs = histPts.map(p => p.x);
+      const xMin = Math.min(...xs), xMax = Math.max(...xs);
+      datasets.push({
+        label: 'OLS trend',
+        data: [{ x: xMin, y: ols.slope * xMin + ols.intercept }, { x: xMax, y: ols.slope * xMax + ols.intercept }],
+        type: 'line', borderColor: 'rgba(255,255,255,0.25)', borderDash: [5, 4],
+        borderWidth: 1.5, pointRadius: 0, fill: false, datalabels: { display: false },
+      });
+    }
+    if (futurePts.length > 0) {
+      datasets.push({
+        label: `${year} class`,
+        data: futurePts.map(p => ({ x: p.x, y: 0, player: p })),
+        backgroundColor: 'rgba(239,68,68,0.8)',
+        pointRadius: 6, pointStyle: 'triangle', pointHoverRadius: 9,
+        datalabels: {
+          display: ctx => {
+            const p = ctx.dataset.data[ctx.dataIndex].player;
+            return p && p.orbit !== null && p.orbit >= 70;
+          },
+          formatter: (_, ctx) => {
+            const p = ctx.dataset.data[ctx.dataIndex].player;
+            if (!p) return '';
+            const parts = p.name.split(' ');
+            return parts[parts.length - 1];
+          },
+          font: { size: 8 }, color: '#ef4444', anchor: 'end', align: 'top', offset: 3, clamp: true,
+        },
+      });
+    }
+    state.analysisCharts.ageb2s = new Chart(c1, {
+      type: 'scatter',
+      data: { datasets },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { labels: { color: '#94a3b8', font: { size: 11 } } },
+          tooltip: {
+            callbacks: {
+              label: ctx => {
+                const p = ctx.raw.player;
+                if (!p) return '';
+                const b2s = p.y !== null && p.y !== 0 ? ` · B2S: ${Number(p.y).toFixed(1)}` : '';
+                const yr = p.draft_year ? ` (${p.draft_year})` : '';
+                return `${p.name}${yr}${b2s}`;
+              },
+            },
+            backgroundColor: 'rgba(26,29,39,0.97)', borderColor: '#2d3148', borderWidth: 1,
+            titleColor: '#e2e8f0', bodyColor: '#94a3b8', padding: 10,
+          },
+          datalabels: { display: false },
+        },
+        scales: {
+          x: { title: { display: true, text: 'Draft Age', color: axisTitleColor, font: { size: 11 } }, grid: { color: darkGrid }, ticks: { color: tickColor } },
+          y: { title: { display: true, text: 'Actual B2S PPG', color: axisTitleColor, font: { size: 11 } }, grid: { color: darkGrid }, ticks: { color: tickColor } },
+        },
+      },
+    });
+  }
+
+  // ── Chart 2: ORBIT vs Position Rank (current class) ─────────────────────────
+  const c2 = document.getElementById('analysis-orbit-rank');
+  if (c2) {
+    const pts2 = currentPlayers
+      .filter(p => p.orbit_score !== null && p.position_rank !== null)
+      .map(p => ({ x: p.position_rank, y: p.orbit_score, player: p }));
+    const ols2 = olsLine(pts2);
+    const ds2 = [{
+      label: `${year} ${pos}`,
+      data: pts2,
+      backgroundColor: pts2.map(p => {
+        const d = p.player.capital_delta;
+        if (d !== null && d < -15) return 'rgba(34,197,94,0.75)';
+        if (d !== null && d > 15) return 'rgba(239,68,68,0.75)';
+        return posColor;
+      }),
+      pointRadius: 6, pointHoverRadius: 9,
+      datalabels: {
+        display: ctx => {
+          const p = ctx.dataset.data[ctx.dataIndex].player;
+          return p && p.orbit_score !== null && p.orbit_score >= 65;
+        },
+        formatter: (_, ctx) => {
+          const p = ctx.dataset.data[ctx.dataIndex].player;
+          if (!p) return '';
+          const parts = p.name.split(' ');
+          return parts[parts.length - 1];
+        },
+        font: { size: 8 }, color: '#94a3b8', anchor: 'end', align: 'right', offset: 3, clamp: true,
+      },
+    }];
+    if (ols2) {
+      const xs2 = pts2.map(p => p.x);
+      const xMin2 = Math.min(...xs2), xMax2 = Math.max(...xs2);
+      ds2.push({
+        label: 'OLS trend',
+        data: [{ x: xMin2, y: ols2.slope * xMin2 + ols2.intercept }, { x: xMax2, y: ols2.slope * xMax2 + ols2.intercept }],
+        type: 'line', borderColor: 'rgba(255,255,255,0.2)', borderDash: [5, 4],
+        borderWidth: 1.5, pointRadius: 0, fill: false, datalabels: { display: false },
+      });
+    }
+    state.analysisCharts.orbitRank = new Chart(c2, {
+      type: 'scatter',
+      data: { datasets: ds2 },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: ctx => {
+                const p = ctx.raw.player;
+                if (!p) return '';
+                return [`${p.name} (${p.college})`, `ORBIT: ${Math.round(p.orbit_score)}  Rank: #${Math.round(ctx.raw.x)}`, `Δ Capital: ${p.capital_delta !== null ? Number(p.capital_delta).toFixed(1) : '—'}`];
+              },
+            },
+            backgroundColor: 'rgba(26,29,39,0.97)', borderColor: '#2d3148', borderWidth: 1,
+            titleColor: '#e2e8f0', bodyColor: '#94a3b8', padding: 10,
+          },
+          datalabels: { display: false },
+        },
+        scales: {
+          x: { title: { display: true, text: 'Position Rank (Big Board)', color: axisTitleColor, font: { size: 11 } }, grid: { color: darkGrid }, ticks: { color: tickColor } },
+          y: { title: { display: true, text: 'ORBIT Score', color: axisTitleColor, font: { size: 11 } }, grid: { color: darkGrid }, ticks: { color: tickColor } },
+        },
+      },
+    });
+  }
+
+  // ── Chart 3: Draft Capital vs B2S (all positions, historical) ───────────────
+  const c3 = document.getElementById('analysis-cap-b2s');
+  if (c3) {
+    const allHist = ['WR', 'RB', 'TE'].flatMap(p =>
+      (getHistorical(p) || [])
+        .filter(h => h.draft_capital_score !== null && h.b2s_score !== null)
+        .map(h => ({ x: h.draft_capital_score, y: h.b2s_score, pos: p, name: h.name }))
+    );
+    const ds3 = ['WR', 'RB', 'TE'].map(p => ({
+      label: p,
+      data: allHist.filter(h => h.pos === p),
+      backgroundColor: posColors[p] || 'rgba(148,163,184,0.5)',
+      pointRadius: 4, pointHoverRadius: 7,
+      datalabels: { display: false },
+    }));
+    const olsAll = olsLine(allHist.map(h => ({ x: h.x, y: h.y })));
+    if (olsAll) {
+      const caps = allHist.map(h => h.x);
+      const capMin = Math.min(...caps), capMax = Math.max(...caps);
+      ds3.push({
+        label: 'OLS (all)',
+        data: [{ x: capMin, y: olsAll.slope * capMin + olsAll.intercept }, { x: capMax, y: olsAll.slope * capMax + olsAll.intercept }],
+        type: 'line', borderColor: 'rgba(255,255,255,0.35)', borderDash: [5, 4],
+        borderWidth: 2, pointRadius: 0, fill: false, datalabels: { display: false },
+      });
+    }
+    state.analysisCharts.capB2s = new Chart(c3, {
+      type: 'scatter',
+      data: { datasets: ds3 },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { labels: { color: '#94a3b8', font: { size: 11 } } },
+          tooltip: {
+            callbacks: {
+              label: ctx => {
+                const d = ctx.raw;
+                return d.name ? `${d.name} — Cap: ${Number(d.x).toFixed(1)}  B2S: ${Number(d.y).toFixed(1)}` : '';
+              },
+            },
+            backgroundColor: 'rgba(26,29,39,0.97)', borderColor: '#2d3148', borderWidth: 1,
+            titleColor: '#e2e8f0', bodyColor: '#94a3b8', padding: 10,
+          },
+          datalabels: { display: false },
+        },
+        scales: {
+          x: { title: { display: true, text: 'Draft Capital Score', color: axisTitleColor, font: { size: 11 } }, grid: { color: darkGrid }, ticks: { color: tickColor } },
+          y: { title: { display: true, text: 'Actual B2S PPG', color: axisTitleColor, font: { size: 11 } }, grid: { color: darkGrid }, ticks: { color: tickColor } },
+        },
+      },
+    });
+  }
+
+  if (!hist.length && !currentPlayers.length) {
+    document.querySelectorAll('#tab-analysis .chart-card-canvas').forEach(el => {
+      el.innerHTML = '<p class="analysis-no-data">No data available. Run with --include-historical to load training set.</p>';
+    });
+  }
+}
+
+function initAnalysis() {
+  document.querySelectorAll('#analysis-pos-btns .seg-btn').forEach(b => {
+    b.addEventListener('click', () => {
+      state.analysisPos = b.dataset.pos;
+      document.querySelectorAll('#analysis-pos-btns .seg-btn').forEach(x => x.classList.toggle('active', x.dataset.pos === b.dataset.pos));
+      if (state.activeTab === 'analysis') renderAnalysis();
+    });
+  });
+  makeYearBtns(document.getElementById('analysis-year-btns'), 'analysisYear', () => {
+    if (state.activeTab === 'analysis') renderAnalysis();
+  });
+}
+
+// ═══════════════════════════════════════════════════════════
 // ABOUT TAB
 // ═══════════════════════════════════════════════════════════
 function renderAbout() {
@@ -1510,7 +1957,8 @@ function renderAbout() {
   initRankings();
   initScatter();
   initHistorical();
-  // About renders on tab switch
+  initAnalysis();
+  // About / Analysis render on tab switch
 })();
 </script>
 </body>
@@ -1544,15 +1992,20 @@ def inject_data(html_template: str, data: dict, year: int) -> str:
 
 def main():
     parser = argparse.ArgumentParser(description="Export Dynasty Prospect Model HTML Dashboard")
-    parser.add_argument("--year", type=int, default=2026, help="Primary draft year to export")
+    parser.add_argument(
+        "--year", type=int, action="append", dest="years",
+        help="Draft year to include (repeatable: --year 2025 --year 2026).",
+    )
     parser.add_argument("--all-years", action="store_true", help="Include all available years (2023-2026)")
     parser.add_argument("--include-historical", action="store_true", help="Include 2011-2022 training players")
     args = parser.parse_args()
 
     if args.all_years:
         years = [2023, 2024, 2025, 2026]
+    elif args.years:
+        years = sorted(args.years)
     else:
-        years = [args.year]
+        years = [2026]
 
     print(f"Building dashboard for year(s): {years}")
     print(f"  Include historical: {args.include_historical}")

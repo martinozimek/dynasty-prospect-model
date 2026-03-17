@@ -30,8 +30,32 @@ import seaborn as sns
 from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.patches import Patch
 from scipy import stats
+from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LassoCV, Ridge, RidgeCV
 from sklearn.preprocessing import StandardScaler
+
+
+# ---------------------------------------------------------------------------
+# QuantileClipper — Phase I pipeline outlier guard (defined here so both
+# fit_model.py and score_class.py can resolve it when loading pickled models)
+# ---------------------------------------------------------------------------
+
+class QuantileClipper(BaseEstimator, TransformerMixin):
+    """
+    Clip each feature at its training-set 99th percentile.
+    Applied in Phase I (no-capital) models to prevent extreme athleticism
+    outliers from dominating when breakout_score is NaN.
+    """
+    def __init__(self, upper_quantile: float = 0.99):
+        self.upper_quantile = upper_quantile
+
+    def fit(self, X, y=None):
+        self.upper_ = np.nanpercentile(X, self.upper_quantile * 100, axis=0)
+        return self
+
+    def transform(self, X):
+        return np.clip(X, a_min=None, a_max=self.upper_)
 import statsmodels.api as sm
 from statsmodels.stats.outliers_influence import variance_inflation_factor
 
