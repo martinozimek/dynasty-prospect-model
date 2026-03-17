@@ -20,6 +20,15 @@ import numpy as np
 import pandas as pd
 from scipy.stats import percentileofscore
 
+# Allow importing analyze.py (shared transformers + engineer_features)
+sys.path.insert(0, str(Path(__file__).parent))
+try:
+    import joblib
+    from analyze import engineer_features, QuantileClipper  # noqa: F401 — needed for pickle resolution
+    _MODELS_AVAILABLE = True
+except ImportError:
+    _MODELS_AVAILABLE = False
+
 # ── Project root ──────────────────────────────────────────────────────────────
 ROOT = Path(__file__).resolve().parent.parent
 SCORES_DIR = ROOT / "output" / "scores"
@@ -262,21 +271,84 @@ def row_to_player(row: pd.Series, pos: str, dists: dict, year: int) -> dict:
         # Top-level convenience fields for table sorting (also in features dict)
         "best_age": safe_float(g("best_age")),
         "best_breakout_score": safe_float(g("best_breakout_score")),
+        # Data quality flags — warn user when key Phase I features are imputed
+        "age_imputed": safe_float(g("best_age")) is None or safe_float(g("best_age")) == 18.5,
+        "breakout_imputed": safe_float(g("best_breakout_score")) is None,
+        "age_suspect": (safe_float(g("best_age")) or 0) > 26 or safe_float(g("best_age")) == 18.5,
         "features": features,
     }
     return player
 
 
-def build_historical(training_dfs: dict, dists: dict) -> dict:
+def _load_hist_models() -> dict:
+    """Load fitted sklearn Pipelines for historical ORBIT computation. Returns {} on failure."""
+    if not _MODELS_AVAILABLE:
+        return {}
+    models = {}
+    for pos in ("WR", "RB", "TE"):
+        cap_path = MODELS_DIR / f"{pos}_ridge.pkl"
+        nc_path  = MODELS_DIR / f"{pos}_ridge_nocap.pkl"
+        try:
+            models[pos] = {
+                "cap":   joblib.load(cap_path)   if cap_path.exists()  else None,
+                "nocap": joblib.load(nc_path)    if nc_path.exists()   else None,
+            }
+        except Exception as exc:
+            print(f"  [warn] Could not load {pos} models: {exc}")
+    return models
+
+
+def _hist_orbit(df: pd.DataFrame, pipe, feat_list: list, train_preds: list) -> pd.Series:
+    """Run historical training rows through a fitted pipeline → ORBIT series."""
+    if pipe is None or not feat_list or not train_preds:
+        return pd.Series([None] * len(df))
+    try:
+        X = df[feat_list].values.astype(float)
+        preds = pipe.predict(X)
+        orbits = [
+            min(100.0, round(float(percentileofscore(train_preds, p, kind="rank")), 1))
+            for p in preds
+        ]
+        return pd.Series(orbits, index=df.index)
+    except Exception as exc:
+        print(f"  [warn] Historical ORBIT computation failed: {exc}")
+        return pd.Series([None] * len(df))
+
+
+def build_historical(training_dfs: dict, dists: dict, meta: dict, meta_nocap: dict) -> dict:
     """Build historical player records from training CSVs (2011-2022, known outcomes)."""
+    hist_models = _load_hist_models()
+
     hist = {}
     for pos, df in training_dfs.items():
+        if df.empty:
+            hist[pos] = []
+            continue
+
+        # ── Engineer capital features (log_draft_capital, interaction terms) ──
+        df_eng = df.copy()
+        if _MODELS_AVAILABLE:
+            try:
+                df_eng = engineer_features(df_eng)
+            except Exception as exc:
+                print(f"  [warn] engineer_features failed for {pos}: {exc}")
+
+        # ── Compute ORBIT scores in bulk ──────────────────────────────────────
+        pos_models = hist_models.get(pos, {})
+        cap_feats   = meta.get(pos, {}).get("selected_features", [])
+        nocap_feats = meta_nocap.get(pos, {}).get("selected_features", [])
+        cap_train   = meta.get(pos, {}).get("train_preds", [])
+        nocap_train = meta_nocap.get(pos, {}).get("train_preds", [])
+
+        orbit_series   = _hist_orbit(df_eng, pos_models.get("cap"),   cap_feats,   cap_train)
+        phase1_series  = _hist_orbit(df_eng, pos_models.get("nocap"), nocap_feats, nocap_train)
+
         records = []
-        for _, row in df.iterrows():
-            def g(col, default=None):
-                if col not in row.index:
+        for i, (_, row) in enumerate(df.iterrows()):
+            def g(col, default=None, _row=row):
+                if col not in _row.index:
                     return default
-                v = row[col]
+                v = _row[col]
                 if pd.isna(v) if not isinstance(v, str) else False:
                     return default
                 return v
@@ -295,9 +367,10 @@ def build_historical(training_dfs: dict, dists: dict) -> dict:
                     else:
                         features[col] = {"value": None, "pct": None}
 
-            # Derive computed features from training df if available
             draft_cap = safe_float(g("draft_capital_score"))
             b2s = safe_float(g("b2s_score"))
+            orb = orbit_series.iloc[i] if i < len(orbit_series) else None
+            p1  = phase1_series.iloc[i] if i < len(phase1_series) else None
 
             records.append({
                 "name": str(g("nfl_name") or g("cfb_name") or ""),
@@ -313,6 +386,9 @@ def build_historical(training_dfs: dict, dists: dict) -> dict:
                 "overall_pick": safe_float(g("overall_pick")),
                 "draft_capital_score": draft_cap,
                 "b2s_score": b2s,
+                "orbit_score": safe_float(orb),
+                "phase1_orbit": safe_float(p1),
+                "capital_delta": round(float(orb) - float(p1), 1) if orb is not None and p1 is not None else None,
                 "features": features,
             })
         hist[pos] = records
@@ -335,6 +411,10 @@ def build_model_perf(meta: dict, meta_nocap: dict) -> dict:
             "ridge_coefs": {
                 f["feature"]: round(f["coef"], 4)
                 for f in m.get("ridge_top_features", [])
+            },
+            "nocap_ridge_coefs": {
+                f["feature"]: round(f["coef"], 4)
+                for f in mn.get("ridge_top_features", [])
             },
             "loyo_by_year": [
                 {"year": y["year"], "r2": round(y["r2"], 3), "n": y["n_test"]}
@@ -385,9 +465,10 @@ def build_dashboard_data(years: list[int], include_historical: bool = False) -> 
     # Historical (training set players with outcomes)
     historical = {}
     if include_historical:
-        historical = build_historical(training_dfs, dists)
+        historical = build_historical(training_dfs, dists, meta, meta_nocap)
         for pos, recs in historical.items():
-            print(f"  Historical {pos}: {len(recs)} records")
+            n_orb = sum(1 for r in recs if r.get("orbit_score") is not None)
+            print(f"  Historical {pos}: {len(recs)} records ({n_orb} with ORBIT scores)")
 
     # Slim down distributions to only features actually used somewhere
     used_features = set()
@@ -668,6 +749,7 @@ tbody td.muted { color: var(--text-muted); }
   background: var(--surface2); border: 1px solid var(--border);
   border-radius: 8px; padding: 10px 12px;
 }
+.feat-imputed { opacity: 0.6; border-style: dashed; }
 .feat-row-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
 .feat-label { font-size: 12px; font-weight: 500; color: var(--text); }
 .feat-val { font-size: 12px; font-weight: 700; color: var(--text); }
@@ -1274,6 +1356,8 @@ function renderPlayerPanel(p) {
   const modelPerf = (DASHBOARD_DATA.model_performance || {})[pos] || {};
   const capFeatures = modelPerf.selected_features || [];
   const nocapFeatures = modelPerf.nocap_features || [];
+  const capCoefs = modelPerf.ridge_coefs || {};
+  const nocapCoefs = modelPerf.nocap_ridge_coefs || {};
 
   // Build HTML
   let html = '';
@@ -1303,6 +1387,24 @@ function renderPlayerPanel(p) {
       <div class="score-card-sub">${riskBadge(p.risk)}</div>
     </div>
   </div>`;
+
+  // Data quality warnings
+  const warnings = [];
+  if (p.age_imputed) {
+    if (p.age_suspect && p.best_age === 18.5)
+      warnings.push('⚠️ Draft age = 18.5 (no DOB/recruit year — likely JUCO or FCS transfer). Phase I score may be inflated.');
+    else if (!p.best_age)
+      warnings.push('⚠️ Draft age missing — Phase I score uses median imputation.');
+  }
+  if (p.age_suspect && p.best_age > 26)
+    warnings.push(`⚠️ Draft age = ${p.best_age?.toFixed(1)} appears incorrect (DB data issue). Phase I score penalized.`);
+  if (p.breakout_imputed)
+    warnings.push('⚠️ Breakout score missing (no PFF/CFBD data for best season). Phase I uses median imputation.');
+  if (warnings.length) {
+    html += `<div style="background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.3);border-radius:6px;padding:10px 12px;margin-bottom:12px;font-size:11px;color:#fbbf24;line-height:1.5">
+      ${warnings.join('<br>')}
+    </div>`;
+  }
 
   // Confidence interval
   if (p.b2s_lo80 !== null && p.b2s_hi80 !== null) {
@@ -1347,17 +1449,22 @@ function renderPlayerPanel(p) {
 
   // Capital model features
   if (capFeatures.length > 0) {
-    html += `<div class="section-title">Capital Model Features</div>
+    html += `<div class="section-title">Capital Model Features <span style="font-weight:400;font-size:11px;color:var(--text-dim)">— signal arrows show coefficient direction</span></div>
     <div class="feat-list">
-      ${capFeatures.map(f => featRow(f, p, pos)).join('')}
+      ${capFeatures.map(f => featRow(f, p, pos, capCoefs)).join('')}
     </div>`;
   }
 
   // Phase I features
   if (nocapFeatures.length > 0) {
-    html += `<div class="section-title">Phase I Model Features</div>
+    // WR-specific multicollinearity note for PFF splits
+    const multicollNote = (pos === 'WR') ? `<div style="font-size:10px;color:var(--text-dim);margin-top:6px;margin-bottom:10px;line-height:1.5;padding:8px 10px;background:rgba(148,163,184,0.06);border-radius:6px">
+      ℹ️ WR PFF splits (Man YPRR, Zone YPRR, Man–Zone Delta) are correlated (r≈0.8). Ridge regression creates suppressor effects: a negative coefficient doesn't mean the stat is bad — it reflects shared variance. Trust the percentile bar, not the arrow direction, for individual PFF splits.
+    </div>` : '';
+    html += `<div class="section-title">Phase I Features (talent-only) <span style="font-weight:400;font-size:11px;color:var(--text-dim)">— signal arrows show coefficient direction</span></div>
+    ${multicollNote}
     <div class="feat-list">
-      ${nocapFeatures.map(f => featRow(f, p, pos)).join('')}
+      ${nocapFeatures.map(f => featRow(f, p, pos, nocapCoefs)).join('')}
     </div>`;
   }
 
@@ -1373,9 +1480,22 @@ function physItem(label, val) {
   </div>`;
 }
 
-function featRow(feature, player, pos) {
+function featRow(feature, player, pos, coefs) {
   const label = FL[feature] || feature;
   const featData = (player.features || {})[feature];
+  const coef = coefs ? (coefs[feature] ?? null) : null;
+
+  // Build signal badge from coefficient
+  function signalBadge(c) {
+    if (c === null) return '';
+    const abs = Math.abs(c);
+    // strength: high ≥1.0, medium ≥0.4, low <0.4
+    const stars = abs >= 1.0 ? '●●●' : abs >= 0.5 ? '●●○' : '●○○';
+    const arrow = c > 0 ? '↑' : '↓';
+    const tooltip = `Coefficient: ${c > 0 ? '+' : ''}${c.toFixed(3)} (${c > 0 ? 'higher = better' : 'lower = better'})`;
+    const arrowColor = c > 0 ? '#22c55e' : '#f87171';
+    return `<span title="${tooltip}" style="font-size:10px;color:${arrowColor};letter-spacing:0">${arrow}</span><span title="${tooltip}" style="font-size:9px;color:var(--text-dim);letter-spacing:-1px">${stars}</span>`;
+  }
 
   // Binary feature
   if (BINARY.has(feature)) {
@@ -1383,7 +1503,7 @@ function featRow(feature, player, pos) {
     const display = val === 1 || val === true ? 'Yes' : val === 0 || val === false ? 'No' : '—';
     return `<div class="feat-row">
       <div class="feat-row-top">
-        <span class="feat-label">${label}</span>
+        <span class="feat-label">${label} ${signalBadge(coef)}</span>
         <span class="feat-val">${display}</span>
       </div>
     </div>`;
@@ -1406,7 +1526,6 @@ function featRow(feature, player, pos) {
   // Format value
   let displayVal = '—';
   if (value !== null && value !== undefined) {
-    // Special formats
     if (feature === 'height_inches') displayVal = fmtHeight(value);
     else if (feature === 'weight_lbs') displayVal = `${Math.round(value)} lbs`;
     else if (feature === 'forty_time') displayVal = `${Number(value).toFixed(2)}s`;
@@ -1421,19 +1540,20 @@ function featRow(feature, player, pos) {
     }
   }
 
+  const isImputed = (value === null);
   const tier = tierLabel(pct);
   const pctWidth = pct !== null ? Math.min(100, Math.max(0, pct)) : 0;
   const barColor = pctColor(pct);
 
-  return `<div class="feat-row">
+  return `<div class="feat-row${isImputed ? ' feat-imputed' : ''}">
     <div class="feat-row-top">
-      <span class="feat-label">${label}</span>
+      <span class="feat-label">${label} ${signalBadge(coef)}</span>
       <div style="display:flex;align-items:center;gap:8px">
-        <span class="feat-tier ${tier.cls}">${tier.text}</span>
-        <span class="feat-val">${displayVal}</span>
+        ${isImputed ? '<span style="font-size:10px;color:var(--text-dim)" title="Missing — model uses median imputation">imputed</span>' : `<span class="feat-tier ${tier.cls}">${tier.text}</span>`}
+        <span class="feat-val">${isImputed ? '—' : displayVal}</span>
       </div>
     </div>
-    ${pct !== null ? `<div class="pct-track"><div class="pct-fill ${barColor}" style="width:${pctWidth}%"></div></div>` : ''}
+    ${pct !== null && !isImputed ? `<div class="pct-track"><div class="pct-fill ${barColor}" style="width:${pctWidth}%"></div></div>` : ''}
   </div>`;
 }
 
@@ -1606,9 +1726,13 @@ function renderHistorical() {
   const pos = state.histPos;
   const players = getHistorical(pos);
 
+  const orbHit = players.filter(p => p.orbit_score !== null && p.orbit_score !== undefined).length;
+  const orbNote = orbHit > 0
+    ? ` · ORBIT scores shown are in-sample (model trained on these players — slightly optimistic)`
+    : '';
   document.getElementById('hist-meta').textContent =
     players.length
-      ? `${players.length} ${pos} prospects — 2011–2022 draft classes (known outcomes)`
+      ? `${players.length} ${pos} prospects — 2011–2022 draft classes (known outcomes)${orbNote}`
       : 'No historical data loaded. Re-run export script with --include-historical flag.';
 
   const thead = document.getElementById('hist-thead');
@@ -1616,7 +1740,11 @@ function renderHistorical() {
 
   thead.innerHTML = `<tr>
     <th>Player</th><th>College</th><th>Draft Yr</th>
-    <th>Pick</th><th>Capital</th><th>Actual B2S</th>
+    <th>Pick</th><th>Capital</th>
+    <th title="ORBIT: capital model score (0–100)">ORBIT</th>
+    <th title="Phase I ORBIT: talent-only score (no draft capital)">Phase I</th>
+    <th title="Δ Capital: ORBIT minus Phase I ORBIT">Δ Cap</th>
+    <th>Actual B2S</th>
   </tr>`;
 
   if (!players.length) { tbody.innerHTML = ''; return; }
@@ -1627,12 +1755,26 @@ function renderHistorical() {
   tbody.innerHTML = sorted.map(p => {
     const b2s = p.b2s_score;
     const b2sClass = b2s === null ? '' : b2s >= 12 ? 'outcome-beat' : b2s >= 6 ? 'outcome-near' : 'outcome-miss';
+    const orb = p.orbit_score;
+    const p1 = p.phase1_orbit;
+    const delta = p.capital_delta;
+    const orbColor = orb !== null && orb !== undefined ? orbitColor(orb) : 'inherit';
+    const p1Color = p1 !== null && p1 !== undefined ? orbitColor(p1) : 'inherit';
+    let deltaStr = '—';
+    if (delta !== null && delta !== undefined) {
+      const sign = delta > 0 ? '+' : '';
+      const col = delta >= 15 ? '#ef4444' : delta <= -15 ? '#22c55e' : '#94a3b8';
+      deltaStr = `<span style="color:${col}">${sign}${Math.round(delta)}</span>`;
+    }
     return `<tr>
-      <td style="font-weight:600">${p.name}</td>
+      <td style="font-weight:600;cursor:pointer" onclick="openPlayerPanel(${JSON.stringify(p).replace(/"/g,'&quot;')})">${p.name}</td>
       <td class="muted">${p.college || '—'}</td>
       <td class="muted">${p.draft_year || '—'}</td>
       <td class="muted">${p.overall_pick !== null ? `#${Math.round(p.overall_pick)}` : '—'}</td>
       <td class="muted">${p.draft_capital_score !== null ? fmt(p.draft_capital_score, 1) : '—'}</td>
+      <td style="color:${orbColor};font-weight:600">${orb !== null && orb !== undefined ? Math.round(orb) : '—'}</td>
+      <td style="color:${p1Color}">${p1 !== null && p1 !== undefined ? Math.round(p1) : '—'}</td>
+      <td>${deltaStr}</td>
       <td class="${b2sClass}">${b2s !== null ? fmt(b2s, 1) + ' PPG' : '—'}</td>
     </tr>`;
   }).join('');
