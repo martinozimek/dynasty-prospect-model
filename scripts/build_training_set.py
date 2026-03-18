@@ -439,6 +439,37 @@ def _best_season(
     return max(qualifying, key=lambda s: s.get(metric) or 0.0)
 
 
+def _best_pff_metric(
+    seasons: list[dict],
+    metric_key: str,
+    min_games: int = 6,
+    higher_is_better: bool = True,
+    min_routes: int | None = None,
+) -> float | None:
+    """Best value of a PFF metric across all qualifying seasons (independent of rec_rate season).
+    JJ principle: each metric is evaluated at its peak, not locked to the best volume season."""
+    best = None
+    for s in seasons:
+        if (s.get("games_played") or 0) < min_games:
+            continue
+        if min_routes is not None and (s.get("routes_run") or 0) < min_routes:
+            continue
+        val = s.get(metric_key)
+        if val is None:
+            continue
+        try:
+            val = float(val)
+        except (ValueError, TypeError):
+            continue
+        if best is None:
+            best = val
+        elif higher_is_better and val > best:
+            best = val
+        elif not higher_is_better and val < best:
+            best = val
+    return round(best, 4) if best is not None else None
+
+
 # CFBD dominator_rating = (rec_yards_pct + rec_td_pct) / 2 — receiving production only.
 # For WR/TE, 20% is JJ Zachariason's standard breakout threshold.
 # For RB, CFBD dominator is receiving-only (does not include rushing), so the proper
@@ -800,6 +831,16 @@ def _build_row(
                and recruiting.get("classification") != "JUCO"
             else int(career_seasons <= 3)
         ),
+        # Age at draft day — JJ's "under-22 on draft day" threshold.
+        # Formula: 18.5 + (draft_year - recruit_year). Distinct from best_age
+        # (age at best college season). High collinearity with best_age (~0.85);
+        # Lasso will select at most one. JUCO: None (different recruitment timeline).
+        "age_at_draft": (
+            round(18.5 + (draft_year - recruiting.get("recruit_year")), 1)
+            if recruiting.get("recruit_year") is not None
+               and recruiting.get("classification") != "JUCO"
+            else None
+        ),
         # Combine
         "weight_lbs": weight,
         "forty_time": combine.get("forty_time"),
@@ -819,24 +860,24 @@ def _build_row(
         "recruit_stars": recruiting.get("recruit_stars"),
         "recruit_year": recruiting.get("recruit_year"),
         "recruit_rank_national": recruiting.get("recruit_rank_national"),
-        # PFF metrics — read from best season dict (PFF merged as source of truth).
-        # Non-null for best seasons where PFF data is available (2014+ FBS players).
-        "best_yprr": best.get("yprr"),
-        "best_routes_per_game": best.get("routes_per_game"),
-        "best_receiving_grade": best.get("receiving_grade"),
-        "best_contested_catch_rate": best.get("contested_catch_rate"),
-        "best_drop_rate": best.get("drop_rate"),
-        "best_target_sep": best.get("target_separation"),
-        # PFF split scalars — depth / concept / scheme zones
-        "best_deep_yprr": best.get("deep_yprr"),
-        "best_deep_target_rate": best.get("deep_target_rate"),
-        "best_behind_los_rate": best.get("behind_los_rate"),
-        "best_slot_yprr": best.get("slot_yprr"),
-        "best_slot_target_rate": best.get("slot_target_rate"),
-        "best_screen_rate": best.get("screen_rate"),
-        "best_man_yprr": best.get("man_yprr"),
-        "best_zone_yprr": best.get("zone_yprr"),
-        "best_man_zone_delta": best.get("man_zone_delta"),
+        # PFF efficiency — each metric finds its own best season independently.
+        # JJ principle: peak efficiency need not coincide with peak volume season.
+        "best_yprr":                 _best_pff_metric(seasons_raw, "yprr"),
+        "best_routes_per_game":      _best_pff_metric(seasons_raw, "routes_per_game"),
+        "best_receiving_grade":      _best_pff_metric(seasons_raw, "receiving_grade"),
+        "best_contested_catch_rate": _best_pff_metric(seasons_raw, "contested_catch_rate"),
+        "best_drop_rate":            _best_pff_metric(seasons_raw, "drop_rate", higher_is_better=False),
+        "best_target_sep":           _best_pff_metric(seasons_raw, "target_separation"),
+        # PFF split scalars — independent maxima; min_routes=50 guards noisy small samples
+        "best_deep_yprr":            _best_pff_metric(seasons_raw, "deep_yprr",         min_routes=50),
+        "best_deep_target_rate":     _best_pff_metric(seasons_raw, "deep_target_rate",  min_routes=50),
+        "best_behind_los_rate":      _best_pff_metric(seasons_raw, "behind_los_rate"),
+        "best_slot_yprr":            _best_pff_metric(seasons_raw, "slot_yprr",         min_routes=50),
+        "best_slot_target_rate":     _best_pff_metric(seasons_raw, "slot_target_rate",  min_routes=50),
+        "best_screen_rate":          _best_pff_metric(seasons_raw, "screen_rate"),
+        "best_man_yprr":             _best_pff_metric(seasons_raw, "man_yprr",          min_routes=50),
+        "best_zone_yprr":            _best_pff_metric(seasons_raw, "zone_yprr",         min_routes=50),
+        "best_man_zone_delta":       _best_pff_metric(seasons_raw, "man_zone_delta",    min_routes=50),
         # Pre-draft market expectation
         "consensus_rank": board.get("consensus_rank"),
         "position_rank": board.get("position_rank"),

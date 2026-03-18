@@ -108,6 +108,7 @@ _CANDIDATE_FEATURES = {
         "career_rec_yards", "career_receptions", "career_yardage",
         # Age / breakout — breakout_score already encodes age; early_declare removed (redundant + biases 4-year players)
         "best_age",
+        "age_at_draft",             # JJ's "under-22 on draft day" threshold
         # Athleticism — size only; pure speed excluded per JJ & Barrett
         "weight_lbs",
         # Team context
@@ -160,6 +161,7 @@ _CANDIDATE_FEATURES = {
         "career_rec_yards", "career_yardage",
         # Age — breakout_score already encodes age; early_declare removed (redundant + biases 4-year players)
         "best_age",
+        "age_at_draft",             # JJ's "under-22 on draft day" threshold
         # Athleticism
         "weight_lbs", "speed_score", "agility_score", "combined_ath",
         "vertical_jump", "broad_jump",
@@ -195,6 +197,7 @@ _CANDIDATE_FEATURES = {
         "best_breakout_score",
         # Age / breakout — breakout_score already encodes age; early_declare removed (redundant + biases 4-year players)
         "best_age",
+        "age_at_draft",             # JJ's "under-22 on draft day" threshold
         # Athleticism — important for TEs (necessary but not sufficient)
         "weight_lbs", "speed_score", "combined_ath", "agility_score",
         "forty_time", "vertical_jump", "broad_jump",
@@ -230,6 +233,7 @@ _CANDIDATE_FEATURES_NOCAP = {
         "best_rec_rate",
         "best_dominator",
         "best_age",
+        "age_at_draft",             # JJ's "under-22 on draft day" threshold (high collinearity w/ best_age; Lasso picks one)
         # early_declare removed: breakout_score/best_age already encode youthfulness;
         # binary declare flag unfairly penalizes 4-year players who broke out early (e.g. Olave, Tyson)
         "college_fantasy_ppg",
@@ -247,6 +251,9 @@ _CANDIDATE_FEATURES_NOCAP = {
         "best_deep_yprr",
         "best_deep_target_rate",
         "best_drop_rate",
+        # Phase I interaction terms — double-confirmation signals
+        "breakout_score_x_yprr",    # production AND efficiency agree → highest-conviction Phase I signal
+        "rec_rate_x_routes",        # volume-adjusted efficiency (rec_rate × routes/game)
         # Athleticism — speed_score excluded per JJ (not predictive for WRs;
         # amplifies inflated Phase I scores when breakout_score is NaN — B2 fix)
         "forty_time",
@@ -267,6 +274,7 @@ _CANDIDATE_FEATURES_NOCAP = {
         "college_fantasy_ppg",
         "best_rush_ypc",
         "best_age",
+        "age_at_draft",             # JJ's "under-22 on draft day" threshold (high collinearity w/ best_age; Lasso picks one)
         # early_declare removed: breakout_score/best_age already encode youthfulness signal
         "power4_conf",
         "recruit_rating",
@@ -275,6 +283,8 @@ _CANDIDATE_FEATURES_NOCAP = {
         "best_zone_yprr",
         "best_receiving_grade",
         "best_routes_per_game",
+        # Phase I interaction term — total yards × youth (mirrors breakout_score structure for RBs)
+        "total_yards_x_youth",
         # Athleticism
         "speed_score",
         "forty_time",
@@ -289,6 +299,7 @@ _CANDIDATE_FEATURES_NOCAP = {
         "best_rec_rate",
         "best_dominator",
         "best_age",
+        "age_at_draft",             # JJ's "under-22 on draft day" threshold (high collinearity w/ best_age; Lasso picks one)
         "college_fantasy_ppg",
         "power4_conf",
         "recruit_rating",
@@ -301,6 +312,8 @@ _CANDIDATE_FEATURES_NOCAP = {
         "best_deep_yprr",
         "best_target_sep",
         "best_drop_rate",
+        # Phase I interaction term — production quality × PFF grade (grade captures separation)
+        "breakout_score_x_grade",
         # Athleticism — important for TEs (necessary but not sufficient)
         "speed_score",
         "forty_time",
@@ -359,6 +372,11 @@ _MONOTONE_DIRECTIONS = {
     "best_slot_target_rate": 1,
     "best_man_yprr": 1,         "best_zone_yprr": 1,
     "best_screen_rate": -1,     "best_behind_los_rate": -1,
+    # Age at draft day (younger = better → direction -1)
+    "age_at_draft": -1,
+    # Phase I no-capital interaction terms (higher = better for all four)
+    "breakout_score_x_yprr": 1, "rec_rate_x_routes": 1,
+    "total_yards_x_youth": 1,   "breakout_score_x_grade": 1,
 }
 
 # ---------------------------------------------------------------------------

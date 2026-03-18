@@ -279,6 +279,13 @@ _FEATURE_LABELS = {
     # Draft tier features (ep 1086)
     "draft_tier":                "Draft Tier Ordinal (4=top16, 3=17-50, 2=51-100, 1=day3)",
     "is_top16_rb":               "Top-Half R1 RB Flag (pick<=16 & RB) — R²=0.526 per JJ",
+    # Age at draft day (JJ threshold: under-22)
+    "age_at_draft":              "Age at Draft Day (JJ under-22 threshold)",
+    # Phase I no-capital interaction terms
+    "breakout_score_x_yprr":    "Breakout Score × YPRR (Phase I WR double-signal)",
+    "rec_rate_x_routes":        "Rec Rate × Routes/Game (Phase I WR volume+efficiency)",
+    "total_yards_x_youth":      "Total Yards Rate × Youth 26-age (Phase I RB)",
+    "breakout_score_x_grade":   "Breakout Score × PFF Grade (Phase I TE)",
 }
 
 _MISSING_CAUSES = {
@@ -458,6 +465,21 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
         df["is_top16_rb"] = (
             (df["overall_pick"] <= 16) & (pos_col == "RB")
         ).astype(float)
+    # Phase I no-capital interaction terms — double-confirmation signals without draft capital
+    # WR: production AND efficiency agree → highest-conviction Phase I signal
+    if "best_breakout_score" in df.columns and "best_yprr" in df.columns:
+        df["breakout_score_x_yprr"] = df["best_breakout_score"].fillna(0) * df["best_yprr"].fillna(0)
+    # WR: volume-adjusted efficiency (rec_rate measures team-context dominance; routes = usage)
+    if "best_rec_rate" in df.columns and "best_routes_per_game" in df.columns:
+        df["rec_rate_x_routes"] = df["best_rec_rate"].fillna(0) * df["best_routes_per_game"].fillna(0)
+    # RB: total yards × youth (mirrors breakout_score structure for RBs)
+    if "best_total_yards_rate" in df.columns and "best_age" in df.columns:
+        df["total_yards_x_youth"] = df["best_total_yards_rate"].fillna(0) * (
+            (26.0 - df["best_age"].clip(upper=26)).fillna(0)
+        )
+    # TE: production quality × PFF receiving grade (athleticism model; grade captures separation)
+    if "best_breakout_score" in df.columns and "best_receiving_grade" in df.columns:
+        df["breakout_score_x_grade"] = df["best_breakout_score"].fillna(0) * df["best_receiving_grade"].fillna(0)
     return df
 
 
