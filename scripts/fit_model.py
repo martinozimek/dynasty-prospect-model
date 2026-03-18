@@ -106,8 +106,8 @@ _CANDIDATE_FEATURES = {
         # College production — counting / other
         "college_fantasy_ppg", "best_rec_yards", "best_receptions",
         "career_rec_yards", "career_receptions", "career_yardage",
-        # Age / breakout
-        "best_age", "early_declare",
+        # Age / breakout — breakout_score already encodes age; early_declare removed (redundant + biases 4-year players)
+        "best_age",
         # Athleticism — size only; pure speed excluded per JJ & Barrett
         "weight_lbs",
         # Team context
@@ -158,8 +158,8 @@ _CANDIDATE_FEATURES = {
         "best_usage_pass", "college_fantasy_ppg",
         "best_rush_ypc", "best_yards_per_touch",
         "career_rec_yards", "career_yardage",
-        # Age
-        "best_age", "early_declare",
+        # Age — breakout_score already encodes age; early_declare removed (redundant + biases 4-year players)
+        "best_age",
         # Athleticism
         "weight_lbs", "speed_score", "agility_score", "combined_ath",
         "vertical_jump", "broad_jump",
@@ -193,8 +193,8 @@ _CANDIDATE_FEATURES = {
         "best_ppa_pass",
         # Breakout score
         "best_breakout_score",
-        # Age / breakout
-        "best_age", "early_declare",
+        # Age / breakout — breakout_score already encodes age; early_declare removed (redundant + biases 4-year players)
+        "best_age",
         # Athleticism — important for TEs (necessary but not sufficient)
         "weight_lbs", "speed_score", "combined_ath", "agility_score",
         "forty_time", "vertical_jump", "broad_jump",
@@ -226,11 +226,12 @@ _CANDIDATE_FEATURES = {
 _CANDIDATE_FEATURES_NOCAP = {
     "WR": [
         # Production / efficiency
-        "best_breakout_score",      # rec_rate × SOS × age mult — primary WR metric
+        "best_breakout_score",      # rec_rate × SOS × age mult — primary WR metric; already encodes age signal
         "best_rec_rate",
         "best_dominator",
         "best_age",
-        "early_declare",
+        # early_declare removed: breakout_score/best_age already encode youthfulness;
+        # binary declare flag unfairly penalizes 4-year players who broke out early (e.g. Olave, Tyson)
         "college_fantasy_ppg",
         "power4_conf",
         "recruit_rating",
@@ -266,7 +267,7 @@ _CANDIDATE_FEATURES_NOCAP = {
         "college_fantasy_ppg",
         "best_rush_ypc",
         "best_age",
-        "early_declare",
+        # early_declare removed: breakout_score/best_age already encode youthfulness signal
         "power4_conf",
         "recruit_rating",
         # PFF efficiency

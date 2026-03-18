@@ -186,6 +186,7 @@ def _load_cfb_prospects(cfb_db_path: str, draft_year: int) -> dict:
                 "sp_plus_rating": row.sp_plus_rating,
                 "pass_attempts": row.pass_attempts,
                 "rush_attempts": row.rush_attempts,
+                "games": row.games,
             }
             for row in s.query(CFBTeamSeason).all()
         }
@@ -216,6 +217,7 @@ def _load_cfb_prospects(cfb_db_path: str, draft_year: int) -> dict:
                 sn["sp_plus_rating"]  = ts.get("sp_plus_rating")
                 sn["team_pass_att"]   = ts.get("pass_attempts")
                 sn["team_rush_att"]   = ts.get("rush_attempts")
+                sn["team_games"]      = ts.get("games")
                 total_tds = team_rec_tds.get(key, 0)
                 player_tds = sn.get("rec_tds") or 0
                 sn["rec_td_pct"] = player_tds / total_tds if total_tds > 0 else None
@@ -269,6 +271,7 @@ def _load_cfb_prospects(cfb_db_path: str, draft_year: int) -> dict:
                     "recruit_stars": row.stars,
                     "recruit_year": row.recruit_year,
                     "recruit_rank_national": row.ranking_national,
+                    "classification": row.classification,
                 }
         result["recruiting"] = recruiting
 
@@ -383,7 +386,10 @@ def _load_cfb_prospects(cfb_db_path: str, draft_year: int) -> dict:
             pff_rec_yards = pff_sn.get("rec_yards")
             team_pass_att = sn.get("team_pass_att")
             if pff_rec_yards is not None and team_pass_att and team_pass_att > 0:
-                sn["rec_yards_per_team_pass_att"] = round(pff_rec_yards / team_pass_att, 6)
+                player_games = sn.get("games_played") or 1
+                team_games = sn.get("team_games") or player_games   # fallback: no proration
+                adj_pass_att = team_pass_att * player_games / team_games
+                sn["rec_yards_per_team_pass_att"] = round(pff_rec_yards / adj_pass_att, 6)
             pff_merged += 1
 
     result["seasons"] = dict(seasons)
@@ -795,7 +801,14 @@ def _build_prospect_row(
         "career_rush_tds": career_rush_tds,
         "career_total_tds": career_total_tds,
         "career_rec_per_target": career_rec_per_target,
-        "early_declare": int(career_seasons <= 3),
+        # Prefer calendar-year calculation to avoid bias from missing injury seasons.
+        # JUCO players (classification='JUCO'): use FBS season count, not all-college years.
+        "early_declare": (
+            int(draft_year - recruit_year <= 3)
+            if recruit_year is not None
+               and recruiting.get("classification") != "JUCO"
+            else int(career_seasons <= 3)
+        ),
         # Combine
         "weight_lbs": weight,
         "forty_time": combine.get("forty_time"),
@@ -1155,10 +1168,10 @@ def main() -> None:
                     if pd.isna(delta):
                         return "N/A"
                     if delta <= -15:
-                        return "Low Risk"
+                        return "ZAP Signal"    # Phase I > Full: talent exceeds draft slot → buy signal
                     if delta >= 20:
-                        return "High Risk"
-                    return "Neutral"
+                        return "Capital Bet"   # capital doing heavy lifting → position-dependent concern
+                    return "Balanced"          # capital and production aligned
 
                 combined["risk"] = combined["capital_delta"].apply(_risk)
 

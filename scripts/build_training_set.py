@@ -233,6 +233,7 @@ def _load_cfb(cfb_db_path: str) -> dict:
                     "recruit_stars": row.stars,
                     "recruit_year": row.recruit_year,
                     "recruit_rank_national": row.ranking_national,
+                    "classification": row.classification,
                 }
         result["recruiting"] = recruiting
 
@@ -791,7 +792,14 @@ def _build_row(
         "career_rush_tds": career_rush_tds,
         "career_total_tds": career_total_tds,
         "career_rec_per_target": career_rec_per_target,
-        "early_declare": int(career_seasons <= 3),
+        # Prefer calendar-year calculation to avoid bias from missing injury seasons.
+        # JUCO players: use FBS season count, not all-college years.
+        "early_declare": (
+            int(draft_year - recruiting.get("recruit_year") <= 3)
+            if recruiting.get("recruit_year") is not None
+               and recruiting.get("classification") != "JUCO"
+            else int(career_seasons <= 3)
+        ),
         # Combine
         "weight_lbs": weight,
         "forty_time": combine.get("forty_time"),

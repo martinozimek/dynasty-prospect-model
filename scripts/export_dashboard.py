@@ -1002,7 +1002,7 @@ tbody td.muted { color: var(--text-muted); }
       </div>
       <!-- Row 2: Capital Calibration -->
       <div class="chart-card">
-        <div class="chart-card-title">Draft Capital vs Actual B2S — Historical (all positions, selected highlighted)</div>
+        <div class="chart-card-title" id="chart3-title">Draft Capital vs Actual B2S — Historical</div>
         <div class="chart-card-canvas" style="height:280px"><canvas id="analysis-cap-b2s"></canvas></div>
       </div>
     </div>
@@ -1013,7 +1013,7 @@ tbody td.muted { color: var(--text-muted); }
         <div class="about-section">
           <h2>Dynasty Prospect Model</h2>
           <p>A Ridge regression model trained on 2011–2022 NFL draft classes to predict <strong>Best 2 of 3 Seasons (B2S)</strong> PPR fantasy points per game for WR, RB, and TE prospects. The model uses pre-draft college performance, athleticism, and draft capital signals.</p>
-          <p><strong>ORBIT Score</strong> (0–100) is a calibrated composite that incorporates all model signals. <strong>Phase I ORBIT</strong> is the talent-only score (no draft capital). <strong>Capital Delta</strong> measures how much draft capital shifts the score.</p>
+          <p><strong>ORBIT Score</strong> (0–100) is the full model composite — college production, athleticism, and draft capital. <strong>Talent ORBIT (Phase I)</strong> removes draft capital entirely, inspired by JJ Zachariason's ZAP framework. <strong>Capital Δ</strong> = Full ORBIT minus Talent ORBIT: positive means the draft slot is elevating the score (<em>Capital Bet</em>); negative means talent exceeds the draft slot (<em>ZAP Signal</em> — the NFL may be sleeping on this player). For RBs, top-half R1 capital is very reliable (R²=0.53) so Capital Bet is expected; for WRs, R1 capital is weak (R²=0.08) making Capital Bet a genuine flag.</p>
           <p><strong>B2S</strong>: Best 2 of first 3 NFL seasons PPR PPG (minimum 8 games each). Higher is better; NFL starters typically score 10–15 B2S PPG.</p>
         </div>
         <div class="about-section">
@@ -1139,16 +1139,17 @@ function orbitBarColor(z) {
 function riskBadge(risk) {
   if (!risk) return '<span class="risk-badge risk-neutral">—</span>';
   const lc = risk.toLowerCase();
-  if (lc.includes('low')) return `<span class="risk-badge risk-low">Low Risk</span>`;
-  if (lc.includes('high')) return `<span class="risk-badge risk-high">High Risk</span>`;
-  return `<span class="risk-badge risk-neutral">Neutral</span>`;
+  if (lc.includes('zap'))     return `<span class="risk-badge risk-low" title="Talent ORBIT well above draft capital — production not yet priced in. ZAP-type buy signal (per JJ Zachariason's framework).">ZAP Signal</span>`;
+  if (lc.includes('capital')) return `<span class="risk-badge risk-high" title="Score driven by draft capital more than college production. For WRs this is a real flag (R²=0.08 in R1); for top-half R1 RBs capital is very reliable (R²=0.53).">Capital Bet</span>`;
+  return `<span class="risk-badge risk-neutral" title="Capital and production signals aligned.">Balanced</span>`;
 }
 
 function deltaHtml(d) {
   if (d === null || d === undefined) return '<span class="delta-neutral">—</span>';
   const sign = d < -1 ? 'delta-neg' : d > 1 ? 'delta-pos' : 'delta-neutral';
   const prefix = d > 0 ? '+' : '';
-  return `<span class="${sign}">${prefix}${Number(d).toFixed(1)}</span>`;
+  const tip = d > 1 ? 'Capital elevating score above talent-only' : d < -1 ? 'Talent score exceeds draft slot — ZAP signal' : 'Aligned';
+  return `<span class="${sign}" title="${tip}">${prefix}${Number(d).toFixed(1)}</span>`;
 }
 
 function pctColor(pct) {
@@ -1272,9 +1273,9 @@ const RANK_COLS = [
         </div>
       </div>`;
     }},
-  { key: 'phase1_orbit', label: 'Ph1 ORBIT', fmt: v => v !== null && v !== undefined ? `<span style="color:var(--text-muted)">${Math.round(v)}</span>` : '<span class="empty-dash">—</span>' },
-  { key: 'capital_delta', label: 'Δ', fmt: v => deltaHtml(v) },
-  { key: 'risk', label: 'Risk', fmt: v => riskBadge(v), noSort: true },
+  { key: 'phase1_orbit', label: 'Talent ORBIT', title: 'Talent-only score (no draft capital) — Phase I model', fmt: v => v !== null && v !== undefined ? `<span style="color:var(--text-muted)">${Math.round(v)}</span>` : '<span class="empty-dash">—</span>' },
+  { key: 'capital_delta', label: 'Cap Δ', title: 'Full ORBIT − Talent ORBIT. Positive = capital inflating score (Capital Bet). Negative = talent exceeds draft slot (ZAP Signal).', fmt: v => deltaHtml(v) },
+  { key: 'risk', label: 'Signal', fmt: v => riskBadge(v), noSort: true },
   { key: '_ci', label: '80% CI', fmt: (_, r) => {
       if (r.b2s_lo80 === null || r.b2s_hi80 === null) return '—';
       return `<span style="color:var(--text-muted);font-size:12px">${fmt(r.b2s_lo80)}–${fmt(r.b2s_hi80)}</span>`;
@@ -1290,7 +1291,7 @@ function buildRankingsHeader() {
   const visibleCols = RANK_COLS.filter(c => !c.multiYearOnly || multiYear);
   document.getElementById('rankings-thead').innerHTML =
     `<tr>${visibleCols.map(c => `
-      <th data-key="${c.key}" ${c.noSort ? '' : 'class="sortable"'}>
+      <th data-key="${c.key}" ${c.noSort ? '' : 'class="sortable"'} ${c.title ? `title="${c.title}"` : ''}>
         ${c.label}${c.noSort ? '' : '<span class="sort-icon">↕</span>'}
       </th>`).join('')}</tr>`;
 
@@ -1439,14 +1440,17 @@ function renderPlayerPanel(p) {
       <div class="score-card-sub">${p.projected_b2s !== null ? `Proj B2S: ${fmt(p.projected_b2s)}` : ''}</div>
     </div>
     <div class="score-card">
-      <div class="score-card-label">Phase I ORBIT</div>
+      <div class="score-card-label">Talent ORBIT</div>
       <div class="score-card-val" style="color:var(--text-muted)">${p.phase1_orbit !== null && p.phase1_orbit !== undefined ? Math.round(p.phase1_orbit) : '—'}</div>
-      <div class="score-card-sub">Talent-only</div>
+      <div class="score-card-sub">No draft capital</div>
     </div>
     <div class="score-card">
-      <div class="score-card-label">Δ Capital</div>
+      <div class="score-card-label">Capital Δ</div>
       <div class="score-card-val" style="font-size:18px">${deltaHtml(p.capital_delta)}</div>
-      <div class="score-card-sub">${riskBadge(p.risk)}</div>
+      <div class="score-card-sub">
+        ${p.capital_delta !== null && p.capital_delta > 1 ? `+${Math.round(p.capital_delta)} pts from draft slot` : p.capital_delta !== null && p.capital_delta < -1 ? `${Math.round(p.capital_delta)} pts vs draft slot` : ''}
+        ${riskBadge(p.risk)}
+      </div>
     </div>
   </div>`;
 
@@ -2104,12 +2108,14 @@ function renderAnalysis() {
     });
   }
 
-  // ── Chart 3: Draft Capital vs B2S (all positions, historical) ───────────────
+  // ── Chart 3: Draft Capital vs B2S (selected year, all positions) ───────────────
   const c3 = document.getElementById('analysis-cap-b2s');
+  const chart3Title = document.getElementById('chart3-title');
+  if (chart3Title) chart3Title.textContent = `Draft Capital vs Actual B2S — ${year} class (all positions)`;
   if (c3) {
     const allHist = ['WR', 'RB', 'TE'].flatMap(p =>
       (getHistorical(p) || [])
-        .filter(h => h.draft_capital_score !== null && h.b2s_score !== null)
+        .filter(h => h.draft_capital_score !== null && h.b2s_score !== null && h.draft_year === year)
         .map(h => ({ x: h.draft_capital_score, y: h.b2s_score, pos: p, name: h.name }))
     );
     const ds3 = ['WR', 'RB', 'TE'].map(p => ({
