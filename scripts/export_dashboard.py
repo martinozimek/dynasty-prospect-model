@@ -1923,24 +1923,37 @@ function renderAnalysis() {
   const posColors = { WR: 'rgba(79,156,249,0.7)', RB: 'rgba(34,197,94,0.7)', TE: 'rgba(245,158,11,0.7)' };
   const posColor = posColors[pos] || 'rgba(148,163,184,0.65)';
 
-  // ── Chart 1: Breakout Age vs B2S (historical) ───────────────────────────────
+  // ── Chart 1: Sticky metric vs B2S (historical) + Talent ORBIT (current class) ──
+  // Position-specific "stickiest" stat: WR=YPRR, RB=Dominator Rating, TE=Breakout Score
+  const STICKY_METRIC = { WR: 'best_yprr', RB: 'best_dominator', TE: 'best_breakout_score' };
+  const STICKY_LABEL  = { WR: 'Best YPRR', RB: 'Best Dominator Rating', TE: 'Best Breakout Score' };
+  const metricKey   = STICKY_METRIC[pos] || 'best_yprr';
+  const metricLabel = STICKY_LABEL[pos]  || metricKey;
+
   const c1 = document.getElementById('analysis-age-b2s');
   if (c1) {
+    // Historical: x = sticky metric, y = actual B2S
     const histPts = hist
       .filter(p => p.b2s_score !== null)
       .map(p => {
-        const f = (p.features || {}).best_age;
-        const age = f && typeof f === 'object' ? f.value : (typeof f === 'number' ? f : null);
-        return age !== null ? { x: age, y: p.b2s_score, name: p.name, draft_year: p.draft_year } : null;
+        const f = (p.features || {})[metricKey];
+        const val = f && typeof f === 'object' ? f.value : (typeof f === 'number' ? f : null);
+        return val !== null && val > 0 ? { x: val, y: p.b2s_score, name: p.name, draft_year: p.draft_year } : null;
       })
-      .filter(pt => pt !== null && pt.x >= 18 && pt.x <= 30);
+      .filter(pt => pt !== null);
 
-    // Overlay current-year prospects (triangles at y=0)
+    // Current prospects: x = sticky metric, y = Talent ORBIT (Phase I) — real values, not 0
     const futurePts = currentPlayers
-      .filter(p => p.best_age !== null && p.best_age >= 18 && p.best_age <= 30)
-      .map(p => ({ x: p.best_age, y: null, name: p.name, orbit: p.orbit_score, fullPlayer: p }));
+      .filter(p => p.phase1_orbit !== null)
+      .map(p => {
+        const f = (p.features || {})[metricKey];
+        const val = f && typeof f === 'object' ? f.value : (typeof f === 'number' ? f : null);
+        return val !== null && val > 0
+          ? { x: val, y: p.phase1_orbit, name: p.name, orbit: p.orbit_score, fullPlayer: p }
+          : null;
+      })
+      .filter(pt => pt !== null);
 
-    // F4b: empty-state when no historical data loaded
     if (histPts.length === 0 && futurePts.length === 0) {
       const ctx1 = c1.getContext('2d');
       ctx1.font = '13px Inter, sans-serif';
@@ -1952,10 +1965,10 @@ function renderAnalysis() {
     const ols = olsLine(histPts);
     const datasets = [
       {
-        label: 'Historical',
+        label: 'Historical B2S',
         data: histPts.map(p => ({ x: p.x, y: p.y, player: p })),
         backgroundColor: posColor,
-        pointRadius: 5, pointHoverRadius: 8,
+        pointRadius: 4, pointHoverRadius: 7,
         datalabels: { display: false },
       },
     ];
@@ -1971,9 +1984,9 @@ function renderAnalysis() {
     }
     if (futurePts.length > 0) {
       datasets.push({
-        label: `${year} class`,
-        data: futurePts.map(p => ({ x: p.x, y: 0, player: p })),
-        backgroundColor: 'rgba(239,68,68,0.8)',
+        label: `${year} Talent ORBIT`,
+        data: futurePts.map(p => ({ x: p.x, y: p.y, player: p })),
+        backgroundColor: 'rgba(239,68,68,0.85)',
         pointRadius: 6, pointStyle: 'triangle', pointHoverRadius: 9,
         datalabels: {
           display: ctx => {
@@ -2002,9 +2015,12 @@ function renderAnalysis() {
               label: ctx => {
                 const p = ctx.raw.player;
                 if (!p) return '';
-                const b2s = p.y !== null && p.y !== 0 ? ` · B2S: ${Number(p.y).toFixed(1)}` : '';
+                if (p.fullPlayer) {
+                  // current prospect — show Talent ORBIT
+                  return [`${p.name}`, `${metricLabel}: ${Number(p.x).toFixed(2)}  Talent ORBIT: ${Math.round(p.y)}`];
+                }
                 const yr = p.draft_year ? ` (${p.draft_year})` : '';
-                return `${p.name}${yr}${b2s}`;
+                return `${p.name}${yr} — ${metricLabel}: ${Number(p.x).toFixed(2)}  B2S: ${Number(p.y).toFixed(1)}`;
               },
             },
             backgroundColor: 'rgba(26,29,39,0.97)', borderColor: '#2d3148', borderWidth: 1,
@@ -2026,8 +2042,8 @@ function renderAnalysis() {
           }
         },
         scales: {
-          x: { title: { display: true, text: 'Draft Age', color: axisTitleColor, font: { size: 11 } }, grid: { color: darkGrid }, ticks: { color: tickColor } },
-          y: { title: { display: true, text: 'Actual B2S PPG', color: axisTitleColor, font: { size: 11 } }, grid: { color: darkGrid }, ticks: { color: tickColor } },
+          x: { title: { display: true, text: metricLabel, color: axisTitleColor, font: { size: 11 } }, grid: { color: darkGrid }, ticks: { color: tickColor } },
+          y: { title: { display: true, text: 'B2S PPG / Talent ORBIT', color: axisTitleColor, font: { size: 11 } }, grid: { color: darkGrid }, ticks: { color: tickColor } },
         },
       },
     });
@@ -2108,14 +2124,14 @@ function renderAnalysis() {
     });
   }
 
-  // ── Chart 3: Draft Capital vs B2S (selected year, all positions) ───────────────
+  // ── Chart 3: Draft Capital vs B2S (all training classes, all positions) ────────
   const c3 = document.getElementById('analysis-cap-b2s');
   const chart3Title = document.getElementById('chart3-title');
-  if (chart3Title) chart3Title.textContent = `Draft Capital vs Actual B2S — ${year} class (all positions)`;
+  if (chart3Title) chart3Title.textContent = `Draft Capital vs Actual B2S — Training Set (2014–2022, all positions)`;
   if (c3) {
     const allHist = ['WR', 'RB', 'TE'].flatMap(p =>
       (getHistorical(p) || [])
-        .filter(h => h.draft_capital_score !== null && h.b2s_score !== null && h.draft_year === year)
+        .filter(h => h.draft_capital_score !== null && h.b2s_score !== null)
         .map(h => ({ x: h.draft_capital_score, y: h.b2s_score, pos: p, name: h.name }))
     );
     const ds3 = ['WR', 'RB', 'TE'].map(p => ({
