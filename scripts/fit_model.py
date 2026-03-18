@@ -123,6 +123,10 @@ _CANDIDATE_FEATURES = {
         "best_yprr", "best_receiving_grade", "best_routes_per_game",
         "best_drop_rate", "best_target_sep",
         "yprr_x_capital",
+        # New Phase II capital interactions (Part 3)
+        "pff_grade_x_capital",   # best_receiving_grade × log_draft_capital
+        "usage_x_capital",       # best_usage_pass × log_draft_capital
+        "ppa_x_capital",         # best_ppa_pass × log_draft_capital
         # PFF split metrics — depth / scheme / concept zones
         "best_deep_yprr", "best_deep_target_rate", "deep_target_x_capital", "deep_yprr_x_capital",
         "best_slot_yprr", "best_slot_target_rate", "slot_rate_x_capital",
@@ -159,6 +163,13 @@ _CANDIDATE_FEATURES = {
         "best_usage_pass", "college_fantasy_ppg",
         "best_rush_ypc", "best_yards_per_touch",
         "career_rec_yards", "career_yardage",
+        # Part 3 additions
+        "career_rush_attempts",     # career workload signal
+        "best_man_yprr",            # man coverage receiving
+        "best_behind_los_rate",     # LOS pass involvement
+        "best_deep_yprr",           # WR-route usage
+        "height_inches",
+        "forty_time",
         # Age — breakout_score already encodes age; early_declare removed (redundant + biases 4-year players)
         "best_age",
         "age_at_draft",             # JJ's "under-22 on draft day" threshold
@@ -172,8 +183,7 @@ _CANDIDATE_FEATURES = {
         # Recruiting
         "recruit_rating",
         # PFF split metrics
-        "best_screen_rate", "best_behind_los_rate",
-        "best_man_yprr", "best_zone_yprr", "best_man_zone_delta",
+        "best_screen_rate", "best_zone_yprr", "best_man_zone_delta",
     ],
     "TE": [
         # Draft capital (dominant signal for TEs)
@@ -193,6 +203,12 @@ _CANDIDATE_FEATURES = {
         "best_rec_rate", "best_dominator", "best_reception_share",
         "career_rec_per_target", "college_fantasy_ppg",
         "best_ppa_pass",
+        # Part 3 additions
+        "career_rec_yards",
+        "best_catch_rate",
+        "best_contested_catch_rate",
+        "best_behind_los_rate",
+        "best_screen_rate",
         # Breakout score
         "best_breakout_score",
         # Age / breakout — breakout_score already encodes age; early_declare removed (redundant + biases 4-year players)
@@ -213,11 +229,13 @@ _CANDIDATE_FEATURES = {
         "best_yprr", "best_receiving_grade", "best_routes_per_game",
         "best_target_sep",
         "yprr_x_capital",
+        # New Phase II capital interactions (Part 3)
+        "ppa_x_capital",        # best_ppa_pass × log_draft_capital
+        "rec_td_x_capital",     # best_rec_td_pct × log_draft_capital
         # PFF split metrics
         "best_deep_yprr", "best_deep_target_rate", "deep_target_x_capital", "deep_yprr_x_capital",
         "best_slot_yprr", "best_slot_target_rate", "slot_rate_x_capital",
         "best_man_yprr", "best_zone_yprr", "best_man_zone_delta", "man_delta_x_capital",
-        "best_screen_rate", "best_behind_los_rate",
     ],
 }
 
@@ -228,21 +246,32 @@ _CANDIDATE_FEATURES = {
 # ---------------------------------------------------------------------------
 _CANDIDATE_FEATURES_NOCAP = {
     "WR": [
-        # Production / efficiency
-        "best_breakout_score",      # rec_rate × SOS × age mult — primary WR metric; already encodes age signal
+        # --- Primary production ---
+        "best_breakout_score",      # yprr(PFF) × SOS × age(T) — age encoded here; not separately
+        "breakout_tier",            # ordinal 0/1/2 — captures nonlinear step in breakout_score
         "best_rec_rate",
+        "log_rec_rate",             # log transform (right-skewed distribution)
         "best_dominator",
-        "best_age",
-        "age_at_draft",             # JJ's "under-22 on draft day" threshold (high collinearity w/ best_age; Lasso picks one)
-        # early_declare removed: breakout_score/best_age already encode youthfulness;
-        # binary declare flag unfairly penalizes 4-year players who broke out early (e.g. Olave, Tyson)
+        # --- Target opportunity ---
+        "best_usage_pass",          # target rate relative to pass attempts
+        "best_reception_share",     # % of team receptions
+        "best_rec_td_pct",          # JJ's sub-20% TD ceiling flag
+        "best_catch_rate",          # target completion efficiency
+        # --- Quality signals ---
+        "best_ppa_pass",            # EPA per pass play (orthogonal to rec_rate)
+        # --- Career volume ---
         "college_fantasy_ppg",
-        "power4_conf",
-        "recruit_rating",
-        # PFF efficiency
+        "career_rec_yards",
+        "career_receptions",
+        "career_yardage",           # rec + rush total
+        # NOTE: best_age / age_at_draft removed — age is encoded in best_breakout_score
+        # --- PFF base metrics (season-locked after Part 0 fix) ---
         "best_yprr",
         "best_receiving_grade",
         "best_routes_per_game",
+        "best_drop_rate",
+        "best_target_sep",
+        # --- PFF split metrics (independent peaks — correct as-is) ---
         "best_man_yprr",
         "best_zone_yprr",
         "best_man_zone_delta",
@@ -250,71 +279,57 @@ _CANDIDATE_FEATURES_NOCAP = {
         "best_slot_target_rate",
         "best_deep_yprr",
         "best_deep_target_rate",
-        "best_drop_rate",
-        # Phase I interaction terms — double-confirmation signals
+        # --- Context ---
+        "power4_conf",
+        "teammate_score",
+        "recruit_rating",
+        # --- Athleticism (speed_score excluded per JJ for WRs) ---
+        "forty_time",
+        "broad_jump",
+        "vertical_jump",
+        "agility_score",
+        "weight_lbs",
+        "height_inches",
+        # --- Phase I interaction terms ---
         "breakout_score_x_yprr",    # production AND efficiency agree → highest-conviction Phase I signal
         "rec_rate_x_routes",        # volume-adjusted efficiency (rec_rate × routes/game)
-        # Athleticism — speed_score excluded per JJ (not predictive for WRs;
-        # amplifies inflated Phase I scores when breakout_score is NaN — B2 fix)
-        "forty_time",
-        "broad_jump",
-        "vertical_jump",
-        "agility_score",
-        "weight_lbs",
-        "height_inches",
+        "best_yprr_x_routes",       # YPRR quality anchored by route quantity
+        "grade_x_routes",           # PFF grade confirmed by usage
+        "usage_x_yprr",             # target opportunity × route efficiency
+        "recruit_x_breakout",       # recruiting ceiling × production floor
     ],
     "RB": [
-        # Production / efficiency
-        "best_total_yards_rate",    # primary RB metric
-        "best_breakout_score",
+        # --- Primary production ---
+        "best_total_yards_rate",    # (rec+rush)/team_pass_att × SOS × age
+        "best_breakout_score",      # yprr(PFF) × SOS × age(T) — pass-catching signal
+        "breakout_tier",            # ordinal 0/1/2 — nonlinear tier
         "best_rec_rate",
         "best_dominator",
+        # --- Receiving role ---
         "best_usage_pass",
-        "best_usage_rush",
-        "college_fantasy_ppg",
+        "best_reception_share",
         "best_rush_ypc",
-        "best_age",
-        "age_at_draft",             # JJ's "under-22 on draft day" threshold (high collinearity w/ best_age; Lasso picks one)
-        # early_declare removed: breakout_score/best_age already encode youthfulness signal
-        "power4_conf",
-        "recruit_rating",
-        # PFF efficiency
-        "best_yprr",
-        "best_zone_yprr",
-        "best_receiving_grade",
-        "best_routes_per_game",
-        # Phase I interaction term — total yards × youth (mirrors breakout_score structure for RBs)
-        "total_yards_x_youth",
-        # Athleticism
-        "speed_score",
-        "forty_time",
-        "broad_jump",
-        "vertical_jump",
-        "agility_score",
-        "weight_lbs",
-    ],
-    "TE": [
-        # Production / efficiency
-        "best_breakout_score",
-        "best_rec_rate",
-        "best_dominator",
-        "best_age",
-        "age_at_draft",             # JJ's "under-22 on draft day" threshold (high collinearity w/ best_age; Lasso picks one)
+        "best_yards_per_touch",     # combined rec+rush efficiency
         "college_fantasy_ppg",
-        "power4_conf",
-        "recruit_rating",
-        # PFF efficiency
+        # --- Career volume ---
+        "career_rec_yards",
+        "career_yardage",
+        "career_rush_attempts",     # career workload signal
+        # NOTE: best_age / age_at_draft removed — age is encoded in best_breakout_score
+        # --- PFF base metrics ---
         "best_yprr",
         "best_receiving_grade",
         "best_routes_per_game",
-        "best_slot_target_rate",
-        "best_slot_yprr",
-        "best_deep_yprr",
-        "best_target_sep",
-        "best_drop_rate",
-        # Phase I interaction term — production quality × PFF grade (grade captures separation)
-        "breakout_score_x_grade",
-        # Athleticism — important for TEs (necessary but not sufficient)
+        # --- PFF split metrics ---
+        "best_zone_yprr",
+        "best_man_yprr",
+        "best_behind_los_rate",     # LOS pass involvement
+        "best_deep_yprr",           # WR-route usage
+        # --- Context ---
+        "power4_conf",
+        "recruit_rating",
+        "teammate_score",
+        # --- Athleticism ---
         "speed_score",
         "forty_time",
         "broad_jump",
@@ -322,6 +337,62 @@ _CANDIDATE_FEATURES_NOCAP = {
         "agility_score",
         "weight_lbs",
         "height_inches",
+        # --- Phase I interaction terms ---
+        "total_yards_x_youth",      # mirrors breakout_score structure for RBs
+        "total_yards_rate_x_yprr",  # total yards production × pass-catching efficiency
+        "recruit_x_breakout",       # recruiting ceiling × production floor
+    ],
+    "TE": [
+        # --- Primary production ---
+        "best_breakout_score",
+        "breakout_tier",            # ordinal 0/1/2 — nonlinear tier (median split)
+        "breakout_elite",           # binary top-25% flag — Phase A: bs_above_2_5 R²=0.235 for TEs
+        "best_rec_rate",
+        "best_dominator",
+        "best_reception_share",
+        # --- Career efficiency ---
+        "career_rec_per_target",    # yards per target over career
+        "career_rec_yards",
+        "college_fantasy_ppg",
+        # --- Quality signals ---
+        "best_ppa_pass",            # EPA per pass play — strong TE signal
+        "best_rec_td_pct",
+        "best_catch_rate",
+        # NOTE: best_age / age_at_draft removed — age is encoded in best_breakout_score
+        # --- Context ---
+        "power4_conf",
+        "recruit_rating",
+        "teammate_score",
+        # --- PFF base metrics ---
+        "best_yprr",
+        "best_receiving_grade",
+        "best_routes_per_game",
+        "best_drop_rate",
+        "best_target_sep",
+        "best_contested_catch_rate",
+        # --- PFF split metrics ---
+        "best_man_yprr",
+        "best_zone_yprr",
+        "best_man_zone_delta",
+        "best_slot_yprr",
+        "best_slot_target_rate",
+        "best_deep_yprr",
+        "best_deep_target_rate",
+        "best_behind_los_rate",
+        "best_screen_rate",
+        # --- Athleticism (important for TEs per JJ & Barrett) ---
+        "speed_score",
+        "forty_time",
+        "broad_jump",
+        "vertical_jump",
+        "agility_score",
+        "weight_lbs",
+        "height_inches",
+        # --- Phase I interaction terms ---
+        "breakout_score_x_grade",   # production quality × PFF grade (grade captures separation)
+        "dominator_x_yprr",         # receiving dominance × route efficiency
+        "breakout_x_ppa",           # production × scheme quality
+        "recruit_x_breakout",       # recruiting ceiling × production floor
     ],
 }
 
@@ -374,9 +445,22 @@ _MONOTONE_DIRECTIONS = {
     "best_screen_rate": -1,     "best_behind_los_rate": -1,
     # Age at draft day (younger = better → direction -1)
     "age_at_draft": -1,
-    # Phase I no-capital interaction terms (higher = better for all four)
+    # Phase I no-capital interaction terms (higher = better)
     "breakout_score_x_yprr": 1, "rec_rate_x_routes": 1,
     "total_yards_x_youth": 1,   "breakout_score_x_grade": 1,
+    # Phase I expanded interactions (Part 2 additions)
+    "best_yprr_x_routes":       1,
+    "grade_x_routes":           1,
+    "usage_x_yprr":             1,
+    "dominator_x_yprr":         1,
+    "total_yards_rate_x_yprr":  1,
+    "recruit_x_breakout":       1,
+    "breakout_x_ppa":           1,
+    # Phase II capital interaction terms (Part 4 additions)
+    "pff_grade_x_capital":      1,
+    "usage_x_capital":          1,
+    "ppa_x_capital":            1,
+    "rec_td_x_capital":         1,
 }
 
 # ---------------------------------------------------------------------------

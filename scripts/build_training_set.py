@@ -504,32 +504,74 @@ def _breakout_age(
     return None
 
 
-def _breakout_score(seasons: list[dict], min_games: int = 6) -> float | None:
-    """
-    JJ Zachariason's Breakout Score — primary WR production input (Ep 1083, Feb 2026).
+# Position-specific age threshold for breakout_score (set from Phase A analysis).
+# Phase A univariate R² sweep (analyze_breakout.py, 2026-03-18):
+#   WR: rec_rate×age(24) R²=0.133 > bs_pff_24 R²=0.125 > current(age26) R²=0.122
+#   RB: bs_pff_28 R²=0.086 >> current R²=0.057  (high T rewards late-breaking RBs)
+#   TE: current CFBD formula R²=0.167 > bs_pff_27 R²=0.160  (PFF costs 20 obs, hurts)
+_BREAKOUT_AGE_THRESHOLD = {
+    "WR": 24,   # Phase A result: T=24 optimal (younger WRs score highest)
+    "RB": 28,   # Phase A result: T=28 optimal (late-breaking RBs most valuable)
+    "TE": 26,   # Phase A result: CFBD formula wins; T=26 = current best
+}
 
-    Formula (transcript-confirmed):
-      base  = rec_yards_per_team_pass_att
+# Positions that use CFBD rec_rate exclusively (no PFF yprr base).
+# Phase A: TE CFBD formula (R²=0.167) > PFF formula (R²=0.160) AND mixed
+# PFF/CFBD scale distorts breakout_score_x_capital interaction for TEs.
+_BREAKOUT_CFBD_ONLY = {"TE"}
+
+
+def _breakout_score(seasons: list[dict], position: str,
+                    min_games: int = 6) -> float | None:
+    """
+    Position-specific Breakout Score (Ep 1083 + Phase B redesign).
+
+    Base metric:
+      WR/RB: yprr (PFF, season-locked to qualifying seasons) → CFBD fallback
+      TE:    rec_yards_per_team_pass_att (CFBD always — Phase A: CFBD beats PFF
+             R²=0.167 vs 0.160; mixed scale distorts breakout_score_x_capital)
+
+    Formula:
+      efficiency  = yprr [PFF/WR/RB] OR rec_rate [CFBD/all]
       × SOS mult  = max(0.70, min(1.30, 1 + (sp_plus − 5) / 100))
-                    [SP+ ~5 = average FBS → mult=1.0; elite ~30 → 1.25; weak ~−15 → 0.80]
-      × age mult  = max(0, 26 − age_at_season_start)
-                    [younger player = larger multiplier]
+      × age mult  = max(0, T(pos) − age_at_season_start)
+        where T = _BREAKOUT_AGE_THRESHOLD[position]
 
     Taken as MAXIMUM across all qualifying seasons (≥ min_games).
-    WR-focused from 2026; not used as a model input for RBs.
-    Season dicts must be pre-enriched with sp_plus_rating and team_pass_att
-    (done in _load_cfb() / _load_cfb_prospects()).
-    min_team_pass_att guards against option-offense teams (Navy etc.) where a tiny
-    denominator inflates rec_rate to unrealistic levels.
+    Season dicts must be pre-enriched with sp_plus_rating, team_pass_att, and yprr
+    (done in _load_cfb() for training data).
     """
+    threshold = _BREAKOUT_AGE_THRESHOLD.get(position, 26)
+    use_cfbd_only = position in _BREAKOUT_CFBD_ONLY
     best = None
     for s in seasons:
         if (s.get("games_played") or 0) < min_games:
             continue
-        team_pass_att = s.get("team_pass_att") or 0
-        if team_pass_att < 200:   # skip option-offense seasons (Navy ~100, FBS avg ~380)
-            continue
-        rec_rate = s.get("rec_yards_per_team_pass_att") or 0.0
+
+        if use_cfbd_only:
+            # TE: always use CFBD rec_rate (consistent scale across training set)
+            team_pass_att = s.get("team_pass_att") or 0
+            if team_pass_att < 200:
+                continue
+            efficiency = s.get("rec_yards_per_team_pass_att") or 0.0
+        else:
+            # WR/RB: PFF-first, fall back to CFBD when yprr unavailable
+            yprr_raw = s.get("yprr")
+            if yprr_raw is not None:
+                try:
+                    efficiency = float(yprr_raw)
+                except (ValueError, TypeError):
+                    efficiency = None
+            else:
+                efficiency = None
+
+            if efficiency is None:
+                # CFBD fallback: rec_yards / team_pass_att
+                team_pass_att = s.get("team_pass_att") or 0
+                if team_pass_att < 200:   # skip option-offense seasons (Navy ~100, FBS avg ~380)
+                    continue
+                efficiency = s.get("rec_yards_per_team_pass_att") or 0.0
+
         age = s.get("age_at_season_start")
         if age is None:
             continue
@@ -538,7 +580,7 @@ def _breakout_score(seasons: list[dict], min_games: int = 6) -> float | None:
             max(0.70, min(1.30, 1.0 + (sp_plus - 5.0) / 100.0))
             if sp_plus is not None else 1.0
         )
-        score = rec_rate * sos_mult * max(0.0, 26.0 - age)
+        score = efficiency * sos_mult * max(0.0, float(threshold) - age)
         if best is None or score > best:
             best = score
     return round(best, 4) if best is not None else None
@@ -700,8 +742,8 @@ def _build_row(
 
     # Breakout age (kept for diagnostic reference)
     breakout_age = _breakout_age(seasons_raw, position, min_games=min_games)
-    # Breakout score: WR primary input (rec_rate × SOS mult × age mult)
-    best_breakout_score = _breakout_score(seasons_raw, min_games=min_games)
+    # Breakout score: PFF-first (yprr × SOS × age(T_pos)), CFBD fallback
+    best_breakout_score = _breakout_score(seasons_raw, position=position, min_games=min_games)
     # Total yards rate: RB primary input ((rec+rush yds)/team_pass_att × SOS mult × age mult)
     best_total_yards_rate = _total_yards_rate(seasons_raw, min_games=min_games)
     # Phase D variant: denominator = total team plays (pass_att + rush_att)
@@ -860,14 +902,15 @@ def _build_row(
         "recruit_stars": recruiting.get("recruit_stars"),
         "recruit_year": recruiting.get("recruit_year"),
         "recruit_rank_national": recruiting.get("recruit_rank_national"),
-        # PFF efficiency — each metric finds its own best season independently.
-        # JJ principle: peak efficiency need not coincide with peak volume season.
-        "best_yprr":                 _best_pff_metric(seasons_raw, "yprr"),
-        "best_routes_per_game":      _best_pff_metric(seasons_raw, "routes_per_game"),
-        "best_receiving_grade":      _best_pff_metric(seasons_raw, "receiving_grade"),
-        "best_contested_catch_rate": _best_pff_metric(seasons_raw, "contested_catch_rate"),
-        "best_drop_rate":            _best_pff_metric(seasons_raw, "drop_rate", higher_is_better=False),
-        "best_target_sep":           _best_pff_metric(seasons_raw, "target_separation"),
+        # PFF base metrics — season-locked to the best rec_rate season (same context as
+        # breakout_score denominator). Independent-peak approach was noisy: a player with
+        # 25 routes in a freshman year showed an inflated "best_yprr" (Part 0 fix).
+        "best_yprr":                 best.get("yprr"),
+        "best_routes_per_game":      best.get("routes_per_game"),
+        "best_receiving_grade":      best.get("receiving_grade"),
+        "best_contested_catch_rate": best.get("contested_catch_rate"),
+        "best_drop_rate":            best.get("drop_rate"),
+        "best_target_sep":           best.get("target_separation"),
         # PFF split scalars — independent maxima; min_routes=50 guards noisy small samples
         "best_deep_yprr":            _best_pff_metric(seasons_raw, "deep_yprr",         min_routes=50),
         "best_deep_target_rate":     _best_pff_metric(seasons_raw, "deep_target_rate",  min_routes=50),

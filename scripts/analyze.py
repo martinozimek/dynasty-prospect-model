@@ -263,6 +263,8 @@ _FEATURE_LABELS = {
     "breakout_x_capital":        "Breakout Age Inverted x Draft Capital [deprecated]",
     "college_fpg_x_capital":     "College Fantasy PPG x Draft Capital",
     "dominator_x_breakout":      "Dominator x Breakout Youth [deprecated]",
+    "breakout_tier":             "Breakout Tier (0=none, 1=below median, 2=above median)",
+    "breakout_elite":            "Breakout Elite Flag (top-25% breakout_score — TE nonlinear signal)",
     "breakout_score_x_capital":  "Breakout Score x Draft Capital",
     "breakout_score_x_dominator": "Breakout Score x Dominator Rating",
     "total_yards_rate_x_capital": "Total Yards Rate x Draft Capital (RB)",
@@ -286,6 +288,19 @@ _FEATURE_LABELS = {
     "rec_rate_x_routes":        "Rec Rate × Routes/Game (Phase I WR volume+efficiency)",
     "total_yards_x_youth":      "Total Yards Rate × Youth 26-age (Phase I RB)",
     "breakout_score_x_grade":   "Breakout Score × PFF Grade (Phase I TE)",
+    # Phase I expanded interactions (Part 2)
+    "best_yprr_x_routes":        "YPRR × Routes Per Game (Phase I efficiency × volume)",
+    "grade_x_routes":            "PFF Grade × Routes Per Game (Phase I quality × usage)",
+    "usage_x_yprr":              "Pass Usage Rate × YPRR (Phase I opportunity × efficiency)",
+    "dominator_x_yprr":          "Dominator × YPRR (Phase I TE ceiling signal)",
+    "total_yards_rate_x_yprr":   "Total Yards Rate × YPRR (Phase I RB dual-threat)",
+    "recruit_x_breakout":        "Recruit Rating × Breakout Score (ceiling × floor)",
+    "breakout_x_ppa":            "Breakout Score × PPA Pass (production × scheme quality)",
+    # Phase II capital interaction terms (Part 4)
+    "pff_grade_x_capital":       "PFF Grade × Draft Capital (quality validated by market)",
+    "usage_x_capital":           "Pass Usage Rate × Draft Capital (opportunity × market)",
+    "ppa_x_capital":             "PPA Pass × Draft Capital (scheme quality × market)",
+    "rec_td_x_capital":          "Rec TD Share × Draft Capital (TD role confirmed by capital)",
 }
 
 _MISSING_CAUSES = {
@@ -480,6 +495,54 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     # TE: production quality × PFF receiving grade (athleticism model; grade captures separation)
     if "best_breakout_score" in df.columns and "best_receiving_grade" in df.columns:
         df["breakout_score_x_grade"] = df["best_breakout_score"].fillna(0) * df["best_receiving_grade"].fillna(0)
+    # Phase I no-capital interactions — expanded (Part 2 addition)
+    # WR: efficiency × volume (YPRR quality anchored by route quantity)
+    if "best_yprr" in df.columns and "best_routes_per_game" in df.columns:
+        df["best_yprr_x_routes"] = df["best_yprr"].fillna(0) * df["best_routes_per_game"].fillna(0)
+    # WR: PFF grade × usage (quality confirmed by opportunity)
+    if "best_receiving_grade" in df.columns and "best_routes_per_game" in df.columns:
+        df["grade_x_routes"] = df["best_receiving_grade"].fillna(0) * df["best_routes_per_game"].fillna(0)
+    # WR/RB: target opportunity × route efficiency
+    if "best_usage_pass" in df.columns and "best_yprr" in df.columns:
+        df["usage_x_yprr"] = df["best_usage_pass"].fillna(0) * df["best_yprr"].fillna(0)
+    # TE: receiving dominance × route efficiency
+    if "best_dominator" in df.columns and "best_yprr" in df.columns:
+        df["dominator_x_yprr"] = df["best_dominator"].fillna(0) * df["best_yprr"].fillna(0)
+    # RB: total yards production × pass-catching efficiency
+    if "best_total_yards_rate" in df.columns and "best_yprr" in df.columns:
+        df["total_yards_rate_x_yprr"] = df["best_total_yards_rate"].fillna(0) * df["best_yprr"].fillna(0)
+    # WR/RB/TE: recruiting ceiling × production floor
+    if "recruit_rating" in df.columns and "best_breakout_score" in df.columns:
+        df["recruit_x_breakout"] = df["recruit_rating"].fillna(0) * df["best_breakout_score"].fillna(0)
+    # TE: production × scheme quality (EPA per pass confirms offensive environment)
+    if "best_breakout_score" in df.columns and "best_ppa_pass" in df.columns:
+        df["breakout_x_ppa"] = df["best_breakout_score"].fillna(0) * df["best_ppa_pass"].fillna(0)
+    # New Phase II capital interaction terms (Part 4)
+    if "best_receiving_grade" in df.columns and "log_draft_capital" in df.columns:
+        df["pff_grade_x_capital"] = df["best_receiving_grade"].fillna(0) * df["log_draft_capital"]
+    if "best_usage_pass" in df.columns and "log_draft_capital" in df.columns:
+        df["usage_x_capital"] = df["best_usage_pass"].fillna(0) * df["log_draft_capital"]
+    if "best_ppa_pass" in df.columns and "log_draft_capital" in df.columns:
+        df["ppa_x_capital"] = df["best_ppa_pass"].fillna(0) * df["log_draft_capital"]
+    if "best_rec_td_pct" in df.columns and "log_draft_capital" in df.columns:
+        df["rec_td_x_capital"] = df["best_rec_td_pct"].fillna(0) * df["log_draft_capital"]
+    # Breakout tier: ordinal 0/1/2 based on best_breakout_score vs population median.
+    # Captures nonlinear step behavior confirmed in Phase A threshold analysis.
+    # 0 = missing/no qualifying season; 1 = below-median; 2 = above-median.
+    if "best_breakout_score" in df.columns:
+        bs = df["best_breakout_score"]
+        bs_med = bs.median()
+        df["breakout_tier"] = np.where(
+            bs.isna(), 0,
+            np.where(bs >= bs_med, 2, 1)
+        ).astype(float)
+        # Breakout elite: 1 if above 75th percentile (captures TE-specific nonlinear
+        # step at elite end — Phase A: bs_above_2_5 R²=0.235 for TEs vs tier R²=0.149)
+        bs_p75 = bs.quantile(0.75)
+        df["breakout_elite"] = np.where(
+            bs.isna(), 0.0,
+            np.where(bs >= bs_p75, 1.0, 0.0)
+        )
     return df
 
 
