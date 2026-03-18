@@ -405,6 +405,101 @@ def build_historical(training_dfs: dict, dists: dict, meta: dict, meta_nocap: di
     return hist
 
 
+def build_season_data() -> dict:
+    """Load per-season production data from cfb-prospect-db for the year-out chart.
+    Returns dict keyed by position with background dots, elite avg line, and prospect seasons.
+    """
+    import sqlite3
+    db = ROOT.parent / "cfb-prospect-db" / "ff.db"
+    if not db.exists():
+        return {}
+    con = sqlite3.connect(str(db))
+    df = pd.read_sql("""
+        SELECT
+            s.player_id,
+            p.full_name,
+            p.position,
+            p.declared_draft_year,
+            s.season_year,
+            s.games_played,
+            s.rec_yards_per_team_pass_att,
+            s.dominator_rating
+        FROM cfb_player_seasons s
+        JOIN players p ON p.id = s.player_id
+        LEFT JOIN (
+            SELECT player_id, MIN(recruit_year) AS recruit_year
+            FROM recruiting GROUP BY player_id
+        ) r ON r.player_id = s.player_id
+        WHERE p.position IN ('WR','RB','TE')
+          AND s.games_played >= 6
+    """, con)
+    picks = pd.read_sql(
+        "SELECT player_id FROM nfl_draft_picks WHERE draft_round <= 2", con
+    )
+    con.close()
+
+    elite_ids = set(picks["player_id"])
+    min_sy = df.groupby("player_id")["season_year"].min().rename("min_sy")
+    df = df.join(min_sy, on="player_id")
+    df["year_out"] = (df["season_year"] - df["min_sy"] + 1).astype(int)
+    df = df[(df["year_out"] >= 1) & (df["year_out"] <= 5)]
+    df["is_elite"] = df["player_id"].isin(elite_ids)
+
+    Y_LIMS = {
+        "WR": ("rec_yards_per_team_pass_att", "Rec Yds / Team Pass Att", 0.0, 4.0),
+        "RB": ("dominator_rating",            "Dominator Rating",         0.0, 0.25),
+        "TE": ("rec_yards_per_team_pass_att", "Rec Yds / Team Pass Att", 0.0, 2.5),
+    }
+    PROSPECT_YEARS = [2024, 2025, 2026]
+
+    result = {}
+    for pos, (metric, label, y_lo, y_hi) in Y_LIMS.items():
+        pos_df = df[(df["position"] == pos)].dropna(subset=[metric]).copy()
+        pos_df = pos_df[(pos_df[metric] >= y_lo) & (pos_df[metric] <= y_hi)]
+
+        # Elite average per year_out (R1-R2 picks only, from non-prospect years)
+        bg_df = pos_df[~pos_df["declared_draft_year"].isin(PROSPECT_YEARS)]
+        elite_avg = {}
+        for yo in range(1, 6):
+            sub = bg_df[(bg_df["year_out"] == yo) & bg_df["is_elite"]]
+            if len(sub) >= 3:
+                elite_avg[str(yo)] = round(float(sub[metric].mean()), 4)
+
+        # Background dots (non-prospect years only, sampled to ≤5k points to keep HTML small)
+        bg_pts = [
+            {"x": int(r["year_out"]), "y": round(float(r[metric]), 4)}
+            for _, r in bg_df.iterrows()
+        ]
+        if len(bg_pts) > 5000:
+            rng = np.random.default_rng(42)
+            idx = rng.choice(len(bg_pts), 5000, replace=False)
+            bg_pts = [bg_pts[i] for i in sorted(idx)]
+
+        # Prospect seasons per year (named, for highlighting)
+        prospects = {}
+        for yr in PROSPECT_YEARS:
+            yr_df = pos_df[pos_df["declared_draft_year"] == yr]
+            pts = []
+            # Aggregate to best season per player to avoid clutter
+            for pid, grp in yr_df.groupby("player_id"):
+                best = grp.loc[grp[metric].idxmax()]
+                pts.append({
+                    "x": int(best["year_out"]),
+                    "y": round(float(best[metric]), 4),
+                    "name": str(best["full_name"]),
+                })
+            prospects[str(yr)] = pts
+
+        result[pos] = {
+            "metric_label": label,
+            "y_max": y_hi,
+            "bg": bg_pts,
+            "elite_avg": elite_avg,
+            "prospects": prospects,
+        }
+    return result
+
+
 def build_model_perf(meta: dict, meta_nocap: dict) -> dict:
     """Build model performance summary for each position."""
     perf = {}
@@ -480,6 +575,9 @@ def build_dashboard_data(years: list[int], include_historical: bool = False) -> 
             n_orb = sum(1 for r in recs if r.get("orbit_score") is not None)
             print(f"  Historical {pos}: {len(recs)} records ({n_orb} with ORBIT scores)")
 
+    # Season-level production data for year-out chart
+    season_data = build_season_data()
+
     # Slim down distributions to only features actually used somewhere
     used_features = set()
     for pos_perf in model_perf.values():
@@ -515,6 +613,7 @@ def build_dashboard_data(years: list[int], include_historical: bool = False) -> 
         "feature_distributions": slim_dists,
         "players": players_by_year,
         "historical": historical,
+        "season_data": season_data,
     }
     return data
 
@@ -1061,8 +1160,10 @@ const state = {
   scatterX: 'phase1_orbit',
   scatterY: 'orbit_score',
   histPos: 'WR',
+  histSort: { key: 'b2s_score', dir: -1 },
   analysisPos: 'WR',
   analysisYear: DASHBOARD_DATA.meta.primary_year,
+  analysisYears: new Set([DASHBOARD_DATA.meta.primary_year]),
   sortCol: 'pos_rank',
   sortDir: 1,
   search: '',
@@ -1243,6 +1344,29 @@ function makeRankingsYearBtns(container) {
       }
       container.querySelectorAll('.seg-btn').forEach(x => x.classList.toggle('active', state.activeYears.has(x.dataset.year)));
       renderRankingsBody();
+    });
+  });
+}
+
+// Multi-select year buttons for Analysis tab
+function makeAnalysisYearBtns(container) {
+  const years = DASHBOARD_DATA.meta.years || [];
+  container.innerHTML = years.map(y =>
+    `<button class="seg-btn ${state.analysisYears.has(y) ? 'active' : ''}" data-year="${y}">${y}</button>`
+  ).join('');
+  container.querySelectorAll('.seg-btn').forEach(b => {
+    b.addEventListener('click', () => {
+      const yr = b.dataset.year;
+      if (state.analysisYears.has(yr)) {
+        if (state.analysisYears.size > 1) state.analysisYears.delete(yr);
+      } else {
+        state.analysisYears.add(yr);
+        state.analysisYear = yr; // keep single-year for chart2/chart3 (last clicked)
+      }
+      container.querySelectorAll('.seg-btn').forEach(x =>
+        x.classList.toggle('active', state.analysisYears.has(x.dataset.year))
+      );
+      if (state.activeTab === 'analysis') renderAnalysis();
     });
   });
 }
@@ -1834,19 +1958,31 @@ function renderHistorical() {
   const thead = document.getElementById('hist-thead');
   const tbody = document.getElementById('hist-tbody');
 
+  const sk = state.histSort.key;
+  const sd_arr = state.histSort.dir === 1 ? ' ▲' : ' ▼';
+  const shdr = (label, key, title='') =>
+    `<th style="cursor:pointer;user-select:none" title="${title}" onclick="sortHistorical('${key}')">${label}${sk===key?sd_arr:''}</th>`;
   thead.innerHTML = `<tr>
-    <th>Player</th><th>College</th><th>Draft Yr</th>
-    <th>Pick</th><th>Capital</th>
-    <th title="ORBIT: capital model score (0–100)">ORBIT</th>
-    <th title="Phase I ORBIT: talent-only score (no draft capital)">Phase I</th>
-    <th title="Δ Capital: ORBIT minus Phase I ORBIT">Δ Cap</th>
-    <th>Actual B2S</th>
+    ${shdr('Player','name')}${shdr('College','college')}${shdr('Draft Yr','draft_year')}
+    ${shdr('Pick','overall_pick')}${shdr('Capital','draft_capital_score')}
+    ${shdr('ORBIT','orbit_score','ORBIT: capital model score (0–100)')}
+    ${shdr('Phase I','phase1_orbit','Phase I ORBIT: talent-only score (no draft capital)')}
+    ${shdr('Δ Cap','capital_delta','Δ Capital: ORBIT minus Phase I ORBIT')}
+    ${shdr('Actual B2S','b2s_score')}
   </tr>`;
 
   if (!players.length) { tbody.innerHTML = ''; return; }
 
-  // Sort by b2s_score descending (best outcomes first)
-  const sorted = players.slice().sort((a, b) => (b.b2s_score || 0) - (a.b2s_score || 0));
+  const sKey = state.histSort.key;
+  const sDir = state.histSort.dir;
+  const sorted = players.slice().sort((a, b) => {
+    const av = a[sKey], bv = b[sKey];
+    if (av === null || av === undefined) return 1;
+    if (bv === null || bv === undefined) return -1;
+    return typeof av === 'string'
+      ? sDir * av.localeCompare(bv)
+      : sDir * (bv - av);  // dir=-1 = descending (largest first)
+  });
 
   tbody.innerHTML = sorted.map(p => {
     const b2s = p.b2s_score;
@@ -1886,6 +2022,16 @@ function initHistorical() {
   });
 }
 
+function sortHistorical(key) {
+  if (state.histSort.key === key) {
+    state.histSort.dir *= -1;
+  } else {
+    state.histSort.key = key;
+    state.histSort.dir = -1;
+  }
+  renderHistorical();
+}
+
 // ═══════════════════════════════════════════════════════════
 // ANALYSIS TAB
 // ═══════════════════════════════════════════════════════════
@@ -1916,6 +2062,8 @@ function renderAnalysis() {
   const year = state.analysisYear;
   const hist = getHistorical(pos);
   const currentPlayers = getPlayers(year, pos);
+  // Multi-year: all players from all selected years (for chart 2)
+  const allCurrentPlayers = [...state.analysisYears].flatMap(yr => getPlayers(yr, pos));
 
   const darkGrid = 'rgba(45,49,72,0.5)';
   const tickColor = '#64748b';
@@ -1923,86 +2071,74 @@ function renderAnalysis() {
   const posColors = { WR: 'rgba(79,156,249,0.7)', RB: 'rgba(34,197,94,0.7)', TE: 'rgba(245,158,11,0.7)' };
   const posColor = posColors[pos] || 'rgba(148,163,184,0.65)';
 
-  // ── Chart 1: Sticky metric vs B2S (historical) + Talent ORBIT (current class) ──
-  // Position-specific "stickiest" stat: WR=YPRR, RB=Dominator Rating, TE=Breakout Score
-  const STICKY_METRIC = { WR: 'best_yprr', RB: 'best_dominator', TE: 'best_breakout_score' };
-  const STICKY_LABEL  = { WR: 'Best YPRR', RB: 'Best Dominator Rating', TE: 'Best Breakout Score' };
-  const metricKey   = STICKY_METRIC[pos] || 'best_yprr';
-  const metricLabel = STICKY_LABEL[pos]  || metricKey;
-
+  // ── Chart 1: Production by Year Out of High School ──────────────────────────
+  // Shows metric vs year_out for all historical player-seasons (gray dots),
+  // elite R1-R2 average (dashed line), and selected-year prospect best seasons (triangles).
   const c1 = document.getElementById('analysis-age-b2s');
   if (c1) {
-    // Historical: x = sticky metric, y = actual B2S
-    const histPts = hist
-      .filter(p => p.b2s_score !== null)
-      .map(p => {
-        const f = (p.features || {})[metricKey];
-        const val = f && typeof f === 'object' ? f.value : (typeof f === 'number' ? f : null);
-        return val !== null && val > 0 ? { x: val, y: p.b2s_score, name: p.name, draft_year: p.draft_year } : null;
-      })
-      .filter(pt => pt !== null);
+    const sd = (DASHBOARD_DATA.season_data || {})[pos] || {};
+    const bgPts  = sd.bg        || [];
+    const eliteAvg = sd.elite_avg || {};
+    const metricLbl = sd.metric_label || 'Production';
+    const yMax = sd.y_max || 5;
 
-    // Current prospects: x = sticky metric, y = Talent ORBIT (Phase I) — real values, not 0
-    const futurePts = currentPlayers
-      .filter(p => p.phase1_orbit !== null)
-      .map(p => {
-        const f = (p.features || {})[metricKey];
-        const val = f && typeof f === 'object' ? f.value : (typeof f === 'number' ? f : null);
-        return val !== null && val > 0
-          ? { x: val, y: p.phase1_orbit, name: p.name, orbit: p.orbit_score, fullPlayer: p }
-          : null;
-      })
-      .filter(pt => pt !== null);
+    // Selected years (multi-year support)
+    const yearColors = { '2024': 'rgba(167,139,250,0.9)', '2025': 'rgba(251,146,60,0.9)', '2026': 'rgba(239,68,68,0.9)' };
 
-    if (histPts.length === 0 && futurePts.length === 0) {
-      const ctx1 = c1.getContext('2d');
-      ctx1.font = '13px Inter, sans-serif';
-      ctx1.fillStyle = '#64748b';
-      ctx1.textAlign = 'center';
-      ctx1.fillText('Rebuild with --include-historical to show historical B2S data', c1.width / 2, c1.height / 2);
-    }
-
-    const ols = olsLine(histPts);
     const datasets = [
       {
-        label: 'Historical B2S',
-        data: histPts.map(p => ({ x: p.x, y: p.y, player: p })),
-        backgroundColor: posColor,
-        pointRadius: 4, pointHoverRadius: 7,
+        label: 'All historical',
+        data: bgPts,
+        backgroundColor: 'rgba(148,163,184,0.18)',
+        pointRadius: 3, pointHoverRadius: 5,
         datalabels: { display: false },
       },
     ];
-    if (ols) {
-      const xs = histPts.map(p => p.x);
-      const xMin = Math.min(...xs), xMax = Math.max(...xs);
+
+    // Elite average line (dashed)
+    const eKeys = Object.keys(eliteAvg).map(Number).sort((a,b)=>a-b);
+    if (eKeys.length >= 2) {
       datasets.push({
-        label: 'Trend line',
-        data: [{ x: xMin, y: ols.slope * xMin + ols.intercept }, { x: xMax, y: ols.slope * xMax + ols.intercept }],
-        type: 'line', borderColor: 'rgba(255,255,255,0.25)', borderDash: [5, 4],
-        borderWidth: 1.5, pointRadius: 0, fill: false, datalabels: { display: false },
+        label: 'R1-R2 avg',
+        data: eKeys.map(yo => ({ x: yo, y: eliteAvg[String(yo)] })),
+        type: 'line',
+        borderColor: 'rgba(251,191,36,0.7)',
+        borderDash: [6, 4],
+        borderWidth: 2,
+        pointRadius: 4,
+        pointBackgroundColor: 'rgba(251,191,36,0.7)',
+        fill: false,
+        datalabels: { display: false },
       });
     }
-    if (futurePts.length > 0) {
+
+    // One dataset per selected year (triangles, named)
+    for (const yr of state.analysisYears) {
+      const prospPts = ((sd.prospects || {})[yr] || []);
+      if (!prospPts.length) continue;
       datasets.push({
-        label: `${year} Talent ORBIT`,
-        data: futurePts.map(p => ({ x: p.x, y: p.y, player: p })),
-        backgroundColor: 'rgba(239,68,68,0.85)',
-        pointRadius: 6, pointStyle: 'triangle', pointHoverRadius: 9,
+        label: `${yr} class`,
+        data: prospPts.map(p => ({ x: p.x, y: p.y, name: p.name })),
+        backgroundColor: yearColors[yr] || 'rgba(239,68,68,0.85)',
+        pointRadius: 7, pointStyle: 'triangle', pointHoverRadius: 10,
         datalabels: {
           display: ctx => {
-            const p = ctx.dataset.data[ctx.dataIndex].player;
-            return p && p.orbit !== null && p.orbit >= 70;
+            const d = ctx.dataset.data[ctx.dataIndex];
+            return d && d.y >= yMax * 0.5;
           },
           formatter: (_, ctx) => {
-            const p = ctx.dataset.data[ctx.dataIndex].player;
-            if (!p) return '';
-            const parts = p.name.split(' ');
+            const d = ctx.dataset.data[ctx.dataIndex];
+            if (!d || !d.name) return '';
+            const parts = d.name.split(' ');
             return parts[parts.length - 1];
           },
-          font: { size: 8 }, color: '#ef4444', anchor: 'end', align: 'top', offset: 3, clamp: true,
+          font: { size: 8 },
+          color: yearColors[yr] || '#ef4444',
+          anchor: 'end', align: 'top', offset: 3, clamp: true,
         },
       });
     }
+
     state.analysisCharts.ageb2s = new Chart(c1, {
       type: 'scatter',
       data: { datasets },
@@ -2013,14 +2149,9 @@ function renderAnalysis() {
           tooltip: {
             callbacks: {
               label: ctx => {
-                const p = ctx.raw.player;
-                if (!p) return '';
-                if (p.fullPlayer) {
-                  // current prospect — show Talent ORBIT
-                  return [`${p.name}`, `${metricLabel}: ${Number(p.x).toFixed(2)}  Talent ORBIT: ${Math.round(p.y)}`];
-                }
-                const yr = p.draft_year ? ` (${p.draft_year})` : '';
-                return `${p.name}${yr} — ${metricLabel}: ${Number(p.x).toFixed(2)}  B2S: ${Number(p.y).toFixed(1)}`;
+                const d = ctx.raw;
+                if (d.name) return `${d.name} — Year ${d.x}: ${Number(d.y).toFixed(3)}`;
+                return `Year ${d.x}: ${Number(d.y).toFixed(3)}`;
               },
             },
             backgroundColor: 'rgba(26,29,39,0.97)', borderColor: '#2d3148', borderWidth: 1,
@@ -2028,22 +2159,17 @@ function renderAnalysis() {
           },
           datalabels: { display: false },
         },
-        onClick: (evt, items) => {
-          if (!items.length) return;
-          const item = items[0];
-          const raw = state.analysisCharts.ageb2s.data.datasets[item.datasetIndex].data[item.index];
-          if (!raw || !raw.player) return;
-          const p = raw.player;
-          if (p.fullPlayer) {
-            openPlayerPanel(p.fullPlayer);
-          } else if (p.name && p.draft_year) {
-            const found = getHistorical(pos).find(h => h.name === p.name && h.draft_year === p.draft_year);
-            if (found) openPlayerPanel(found);
-          }
-        },
         scales: {
-          x: { title: { display: true, text: metricLabel, color: axisTitleColor, font: { size: 11 } }, grid: { color: darkGrid }, ticks: { color: tickColor } },
-          y: { title: { display: true, text: 'B2S PPG / Talent ORBIT', color: axisTitleColor, font: { size: 11 } }, grid: { color: darkGrid }, ticks: { color: tickColor } },
+          x: {
+            title: { display: true, text: 'Year Out of High School', color: axisTitleColor, font: { size: 11 } },
+            grid: { color: darkGrid }, ticks: { color: tickColor, stepSize: 1 },
+            min: 0.5, max: 5.5,
+          },
+          y: {
+            title: { display: true, text: metricLbl, color: axisTitleColor, font: { size: 11 } },
+            grid: { color: darkGrid }, ticks: { color: tickColor },
+            min: 0, max: yMax,
+          },
         },
       },
     });
@@ -2052,36 +2178,43 @@ function renderAnalysis() {
   // ── Chart 2: ORBIT vs Position Rank (current class) ─────────────────────────
   const c2 = document.getElementById('analysis-orbit-rank');
   if (c2) {
-    const pts2 = currentPlayers
+    const yearColors2 = { '2024': 'rgba(167,139,250,0.8)', '2025': 'rgba(251,146,60,0.8)', '2026': 'rgba(239,68,68,0.8)' };
+    const allPts2 = allCurrentPlayers
       .filter(p => p.orbit_score !== null && p.position_rank !== null)
       .map(p => ({ x: p.position_rank, y: p.orbit_score, player: p }));
-    const ols2 = olsLine(pts2);
-    const ds2 = [{
-      label: `${year} ${pos}`,
-      data: pts2,
-      backgroundColor: pts2.map(p => {
-        const d = p.player.capital_delta;
-        if (d !== null && d < -15) return 'rgba(34,197,94,0.75)';
-        if (d !== null && d > 15) return 'rgba(239,68,68,0.75)';
-        return posColor;
-      }),
-      pointRadius: 6, pointHoverRadius: 9,
-      datalabels: {
-        display: ctx => {
-          const p = ctx.dataset.data[ctx.dataIndex].player;
-          return p && p.orbit_score !== null && p.orbit_score >= 65;
+    const ols2 = olsLine(allPts2);
+    const ds2 = [...state.analysisYears].map(yr => {
+      const pts = getPlayers(yr, pos)
+        .filter(p => p.orbit_score !== null && p.position_rank !== null)
+        .map(p => ({ x: p.position_rank, y: p.orbit_score, player: p }));
+      const baseColor = yearColors2[yr] || posColor;
+      return {
+        label: `${yr} ${pos}`,
+        data: pts,
+        backgroundColor: pts.map(p => {
+          const d = p.player.capital_delta;
+          if (d !== null && d < -15) return 'rgba(34,197,94,0.75)';
+          if (d !== null && d > 15) return 'rgba(239,68,68,0.75)';
+          return baseColor;
+        }),
+        pointRadius: 6, pointHoverRadius: 9,
+        datalabels: {
+          display: ctx => {
+            const p = ctx.dataset.data[ctx.dataIndex].player;
+            return p && p.orbit_score !== null && p.orbit_score >= 65;
+          },
+          formatter: (_, ctx) => {
+            const p = ctx.dataset.data[ctx.dataIndex].player;
+            if (!p) return '';
+            const parts = p.name.split(' ');
+            return parts[parts.length - 1];
+          },
+          font: { size: 8 }, color: '#94a3b8', anchor: 'end', align: 'right', offset: 3, clamp: true,
         },
-        formatter: (_, ctx) => {
-          const p = ctx.dataset.data[ctx.dataIndex].player;
-          if (!p) return '';
-          const parts = p.name.split(' ');
-          return parts[parts.length - 1];
-        },
-        font: { size: 8 }, color: '#94a3b8', anchor: 'end', align: 'right', offset: 3, clamp: true,
-      },
-    }];
+      };
+    });
     if (ols2) {
-      const xs2 = pts2.map(p => p.x);
+      const xs2 = allPts2.map(p => p.x);
       const xMin2 = Math.min(...xs2), xMax2 = Math.max(...xs2);
       ds2.push({
         label: 'Trend line',
@@ -2197,9 +2330,7 @@ function initAnalysis() {
       if (state.activeTab === 'analysis') renderAnalysis();
     });
   });
-  makeYearBtns(document.getElementById('analysis-year-btns'), 'analysisYear', () => {
-    if (state.activeTab === 'analysis') renderAnalysis();
-  });
+  makeAnalysisYearBtns(document.getElementById('analysis-year-btns'));
 }
 
 // ═══════════════════════════════════════════════════════════
