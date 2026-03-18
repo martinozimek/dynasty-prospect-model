@@ -68,6 +68,18 @@ _POSITIONS = ("WR", "RB", "TE")
 _BREAKOUT_THRESHOLD = {"WR": 0.20, "TE": 0.20, "RB": 0.10}
 _POWER4_CONFS = frozenset({"SEC", "Big Ten", "ACC", "Big 12"})
 
+# Part 3 — Non-linear ORBIT scale.
+# Raw percentile inflates mid-range prospects. Power transform compresses the
+# middle of the distribution: score = 100 × (pct/100) ^ ORBIT_POWER
+# ORBIT_POWER = 1.8 calibration (approx):
+#   96th pct → 93.2  (elite stays elite)
+#   80th pct → 67.2  (solidly good, not great)
+#   53rd pct → 30.8  (clearly below average)
+#   30th pct → 13.2  (red flag territory)
+# Tune upward toward JJ's ZAP examples iteratively. This does NOT change
+# Ridge predictions — only the displayed score. Always reversible.
+_ORBIT_POWER: float = 1.8
+
 # Floor pick for unranked prospects (no big board entry).
 # Late 6th / early 7th round / UDFA fringe → draft_capital ≈ 0.6
 _UNRANKED_FLOOR_PICK = 220
@@ -446,9 +458,15 @@ def _compute_teammate_score(
     best_team: str | None,
     cfb: dict,
     draft_year: int,
-    year_window: int = 2,
+    look_back: int = 2,   # Part 5: count teammates drafted ≤ look_back years BEFORE
+    look_ahead: int = 0,  # Part 5: count teammates drafted ≤ look_ahead years AFTER
 ) -> float:
-    """Same logic as build_training_set._compute_teammate_score but uses training draft picks."""
+    """Same logic as build_training_set._compute_teammate_score but uses training draft picks.
+
+    Part 5 fix: JJ considers only the last 2 years of a player's career. The old
+    symmetric ±2 window included teammates drafted AFTER the prospect (who may never
+    have overlapped at school). Asymmetric look_back=2, look_ahead=0 fixes this.
+    """
     if not best_team:
         return 0.0
     score = 0.0
@@ -456,7 +474,10 @@ def _compute_teammate_score(
         if pid == player_id:
             continue
         teammate_draft_year = pick.get("draft_year") or 0
-        if abs(teammate_draft_year - draft_year) > year_window:
+        # Asymmetric window: teammate was drafted at most look_back years before
+        # the prospect (overlapped at school) and at most look_ahead years after.
+        diff = teammate_draft_year - draft_year
+        if not (-look_back <= diff <= look_ahead):
             continue
         for season in cfb["seasons"].get(pid, []):
             if season.get("team") == best_team:
@@ -1026,11 +1047,18 @@ def score_position(
     X     = df_eng[features].values
     preds = np.clip(pipeline.predict(X), 0, None)
 
-    # ORBIT Score - percentile vs Ridge training prediction distribution.
+    # ORBIT Score - non-linear percentile vs Ridge training prediction distribution.
+    # Step 1: raw percentile vs training predictions (bounded [0, 100]).
+    # Step 2: power transform to compress mid-range (Part 3).
+    #   score = 100 × (raw_pct / 100) ^ _ORBIT_POWER
     # Bounded [0, 100]: any prospect at or above the training max → ORBIT = 100.
     if len(train_preds_ref) > 0:
         orbit_scores = np.array([
-            min(100.0, float(percentileofscore(train_preds_ref, p, kind="weak")))
+            round(
+                100.0 * (min(100.0, float(percentileofscore(
+                    train_preds_ref, p, kind="weak"))) / 100.0) ** _ORBIT_POWER,
+                1,
+            )
             for p in preds
         ])
     else:

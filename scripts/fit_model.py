@@ -106,9 +106,10 @@ _CANDIDATE_FEATURES = {
         # College production — counting / other
         "college_fantasy_ppg", "best_rec_yards", "best_receptions",
         "career_rec_yards", "career_receptions", "career_yardage",
-        # Age / breakout — breakout_score already encodes age; early_declare removed (redundant + biases 4-year players)
+        # Age / breakout
         "best_age",
         "age_at_draft",             # JJ's "under-22 on draft day" threshold
+        "early_declare",            # JJ includes this; captures draft commitment beyond just age; let Lasso decide
         # Athleticism — size only; pure speed excluded per JJ & Barrett
         "weight_lbs",
         # Team context
@@ -170,9 +171,10 @@ _CANDIDATE_FEATURES = {
         "best_deep_yprr",           # WR-route usage
         "height_inches",
         "forty_time",
-        # Age — breakout_score already encodes age; early_declare removed (redundant + biases 4-year players)
+        # Age
         "best_age",
         "age_at_draft",             # JJ's "under-22 on draft day" threshold
+        "early_declare",            # early declarers tend to be top RB prospects; let Lasso decide
         # Athleticism
         "weight_lbs", "speed_score", "agility_score", "combined_ath",
         "vertical_jump", "broad_jump",
@@ -211,7 +213,7 @@ _CANDIDATE_FEATURES = {
         "best_screen_rate",
         # Breakout score
         "best_breakout_score",
-        # Age / breakout — breakout_score already encodes age; early_declare removed (redundant + biases 4-year players)
+        # Age / breakout — age encoded in breakout_score; early_declare not included for TE
         "best_age",
         "age_at_draft",             # JJ's "under-22 on draft day" threshold
         # Athleticism — important for TEs (necessary but not sufficient)
@@ -397,6 +399,41 @@ _CANDIDATE_FEATURES_NOCAP = {
 }
 
 # ---------------------------------------------------------------------------
+# Capital-only feature sets (Part 1 — baseline: how much does raw draft capital predict?)
+# Used with --capital-only flag OR as a secondary diagnostic pass during standard runs.
+# If full ORBIT LOYO ≤ capital-only LOYO + 0.020, the model fails to beat its baseline.
+# ---------------------------------------------------------------------------
+_CAPITAL_FEATURES_ONLY = {
+    "WR": [
+        "log_draft_capital", "draft_round", "draft_tier", "draft_premium",
+        "consensus_rank", "position_rank",
+    ],
+    "RB": [
+        "log_draft_capital", "draft_round", "draft_tier",
+        "log_pick_capital", "blended_capital_rb", "log_blended_capital",
+        "consensus_rank", "position_rank", "is_top16_rb",
+    ],
+    "TE": [
+        "log_draft_capital", "draft_capital_score", "overall_pick",
+        "draft_tier", "consensus_rank",
+    ],
+}
+
+# ---------------------------------------------------------------------------
+# Max features cap per position (Part 2 — overfitting guard)
+# Hard cap applied after Lasso selection, keeping top-N by |coef|.
+# TE=7 is critical: 97 rows / 10 features = 0.103 features-per-obs (red flag).
+# ---------------------------------------------------------------------------
+_MAX_FEATURES = {
+    "WR": 9,    # 224 rows — cap prevents selection of marginal split metrics
+    "RB": 10,   # 147 rows
+    "TE": 7,    # 97 rows — critical; current 10 features is too many
+}
+
+# FAIL threshold: full ORBIT LOYO must beat capital-only LOYO by at least this margin
+_CAPITAL_DELTA_THRESHOLD = 0.020
+
+# ---------------------------------------------------------------------------
 # LGBM monotone constraints
 # ---------------------------------------------------------------------------
 _MONOTONE_DIRECTIONS = {
@@ -445,6 +482,8 @@ _MONOTONE_DIRECTIONS = {
     "best_screen_rate": -1,     "best_behind_los_rate": -1,
     # Age at draft day (younger = better → direction -1)
     "age_at_draft": -1,
+    # Early declare (1 = ≤3 years of college; more talent → direction +1)
+    "early_declare": 1,
     # Phase I no-capital interaction terms (higher = better)
     "breakout_score_x_yprr": 1, "rec_rate_x_routes": 1,
     "total_yards_x_youth": 1,   "breakout_score_x_grade": 1,
@@ -513,6 +552,7 @@ def _loyo_cv(
     alpha_range: np.ndarray | None = None,       # Step 4/7b: per-position Ridge alpha range
     feature_candidates: list[str] | None = None, # Step 3: nested Lasso per fold
     clip_outliers: bool = False,                 # B3: add QuantileClipper to ridge pipeline
+    max_features: int | None = None,             # Part 2: overfitting cap applied inside nested Lasso
 ) -> dict:
     """
     Leave-One-Year-Out cross-validation.
@@ -544,7 +584,8 @@ def _loyo_cv(
                 and train_sub[f].nunique(dropna=True) > 1
             ]
             fold_features = _lasso_select(
-                train_sub[fold_avail], train_sub[target], cv_folds=3
+                train_sub[fold_avail], train_sub[target], cv_folds=3,
+                max_features=max_features,  # Part 2: overfitting cap
             )
             if not fold_features:
                 fold_features = fold_avail
@@ -776,10 +817,12 @@ def _lasso_select(
     X: pd.DataFrame,
     y: pd.Series,
     cv_folds: int = 5,
+    max_features: int | None = None,
 ) -> list[str]:
     """
     Fit LassoCV on median-imputed, standardized X.
     Returns list of features with non-zero coefficients.
+    If max_features is set, trims to top-N by |coef| (Part 2 overfitting guard).
     """
     imputer = SimpleImputer(strategy="median")
     scaler  = StandardScaler()
@@ -797,6 +840,13 @@ def _lasso_select(
     selected = [f for f, c in zip(X.columns, lasso.coef_) if c != 0.0]
     log.info("  Lasso α=%.4f  selected %d / %d features", lasso.alpha_,
              len(selected), X.shape[1])
+
+    # Part 2: max_features cap — keep top-N by absolute Lasso coefficient
+    if max_features is not None and len(selected) > max_features:
+        coefs = {f: abs(c) for f, c in zip(X.columns, lasso.coef_) if c != 0.0}
+        selected = sorted(selected, key=lambda f: coefs.get(f, 0.0), reverse=True)[:max_features]
+        log.info("  max_features cap: trimmed to %d features", len(selected))
+
     return selected if selected else list(X.columns)
 
 
@@ -807,9 +857,10 @@ def fit_position(
     models_dir: Path,
     fit_lgbm: bool = True,
     cv_strategy: str = "loyo",  # Step 7c: loyo | rolling | kfold
-    feature_candidates: list[str] | None = None,   # Phase I: override candidate pool
+    feature_candidates: list[str] | None = None,   # Phase I or capital-only: override candidate pool
     model_suffix: str = "",                         # Phase I: "_nocap" appended to artifact names
     clip_outliers: bool = False,                    # B3: QuantileClipper in Phase I pipeline
+    max_features: int | None = None,               # Part 2: overfitting cap (None = no cap)
 ) -> dict:
     """
     Full training pipeline for one position.
@@ -841,7 +892,7 @@ def fit_position(
 
     # --- Outer Lasso feature selection (used for scoring model + nested CV) ---
     log.info("  Running LassoCV on %d candidate features...", len(available))
-    selected = _lasso_select(X_full, y_full)
+    selected = _lasso_select(X_full, y_full, max_features=max_features)
     if not selected:
         selected = available
     log.info("  Selected features (%d): %s", len(selected), selected)
@@ -861,6 +912,7 @@ def fit_position(
         # (confirmed in Section 6 diagnostics) without injecting noise.
         feature_candidates=selected,
         clip_outliers=clip_outliers,  # B3: Phase I only
+        max_features=max_features,    # Part 2: overfitting cap inside nested folds
     )
     log.info(
         "  Ridge LOYO: R²=%.3f  MAE=%.2f  RMSE=%.2f  [nested_lasso+RidgeCV]",
@@ -983,6 +1035,7 @@ def fit_position(
         zip(selected, ridge_coefs), key=lambda x: abs(x[1]), reverse=True
     )
 
+    ridge_loyo_r2 = float(cv_ridge["r2"])
     return {
         "position":           position,
         "target":             target,
@@ -991,8 +1044,11 @@ def fit_position(
         "selected_features":  selected,
         "ridge_r2_train":     ridge_r2_train,
         "ridge_alpha":        ridge_alpha,
+        # Part 2: overfitting diagnostics
+        "train_loyo_gap":     round(ridge_r2_train - ridge_loyo_r2, 4),   # >0.10 is a red flag
+        "features_per_obs":   round(len(selected) / len(df), 4),           # >0.08 is a red flag
         "loyo_method":        "nested_lasso",   # Step 3: honest nested Lasso CV
-        "ridge_loyo_r2":      float(cv_ridge["r2"]),
+        "ridge_loyo_r2":      ridge_loyo_r2,
         "ridge_loyo_mae":     float(cv_ridge["mae"]),
         "ridge_loyo_rmse":    float(cv_ridge["rmse"]),
         "ridge_loyo_years":   cv_ridge["year_results"],
@@ -1050,6 +1106,12 @@ def main() -> None:
         help="Train Phase I (no-capital) model using production/efficiency/athleticism "
              "features only. Saves artifacts with '_nocap' suffix (e.g. WR_ridge_nocap.pkl).",
     )
+    parser.add_argument(
+        "--capital-only", action="store_true",
+        help="Train capital-only model (draft position signals only) as a LOYO baseline. "
+             "Saves artifacts with '_capital_only' suffix and metadata_capital_only.json. "
+             "Use to verify full model beats raw draft capital (Part 1).",
+    )
     args = parser.parse_args()
 
     from config import get_data_dir
@@ -1061,23 +1123,47 @@ def main() -> None:
     )
 
     no_capital   = args.no_capital
-    model_suffix = "_nocap" if no_capital else ""
-    all_meta = {}
+    capital_only = args.capital_only
+    if no_capital and capital_only:
+        log.error("--no-capital and --capital-only are mutually exclusive.")
+        sys.exit(1)
+
+    if capital_only:
+        model_suffix = "_capital_only"
+    elif no_capital:
+        model_suffix = "_nocap"
+    else:
+        model_suffix = ""
+
+    all_meta  = {}
+    dfs_eng   = {}   # stored per position for capital-only secondary pass
 
     for pos in positions:
         df_raw = load_training(pos, data_dir, args.start_year, args.end_year)
         df_eng = engineer_features(df_raw)
+        dfs_eng[pos] = df_eng
+
+        if capital_only:
+            cand = _CAPITAL_FEATURES_ONLY[pos]
+        elif no_capital:
+            cand = _CANDIDATE_FEATURES_NOCAP[pos]
+        else:
+            cand = None  # use default _CANDIDATE_FEATURES[pos] inside fit_position
+
+        # Part 2: apply max_features cap for standard runs (not Phase I / capital-only)
+        max_feats = _MAX_FEATURES.get(pos) if (not no_capital and not capital_only) else None
 
         meta = fit_position(
             position=pos,
             df_all=df_eng,
             target=args.target,
             models_dir=models_dir,
-            fit_lgbm=(not args.no_lgbm) and (not no_capital),  # no LGBM for Phase I
+            fit_lgbm=(not args.no_lgbm) and (not no_capital) and (not capital_only),
             cv_strategy=args.cv_strategy,
-            feature_candidates=_CANDIDATE_FEATURES_NOCAP[pos] if no_capital else None,
+            feature_candidates=cand,
             model_suffix=model_suffix,
             clip_outliers=no_capital,  # B3: QuantileClipper for Phase I only
+            max_features=max_feats,
         )
         all_meta[pos] = meta
 
@@ -1110,19 +1196,30 @@ def main() -> None:
     log.info("Metadata saved: %s", meta_path)
 
     # Summary table
-    mode_label = " [Phase I — No Capital]" if no_capital else ""
-    print("\n" + "=" * 84)
+    if capital_only:
+        mode_label = " [Capital-Only Baseline]"
+    elif no_capital:
+        mode_label = " [Phase I — No Capital]"
+    else:
+        mode_label = ""
+    print("\n" + "=" * 90)
     print(f"  Model{mode_label}")
     print(f"{'Position':8}  {'N':>4}  {'Feats':>5}  "
           f"{'Train R2':>8}  {'LOYO R2':>8}  {'LGBM R2':>8}  "
-          f"{'alpha':>7}  {'LGBM Status':>20}")
-    print("-" * 84)
+          f"{'Gap':>6}  {'F/Obs':>5}  {'alpha':>7}  {'LGBM Status':>20}")
+    print("-" * 90)
     for pos, m in all_meta.items():
+        gap   = m.get("train_loyo_gap", float("nan"))
+        f_obs = m.get("features_per_obs", float("nan"))
+        gap_flag   = " !" if (not np.isnan(gap)   and gap   > 0.10) else ""
+        f_obs_flag = " !" if (not np.isnan(f_obs) and f_obs > 0.08) else ""
         print(
             f"{pos:8}  {m['n_train']:>4}  {m['n_features']:>5}  "
             f"{m['ridge_r2_train']:>8.3f}  "
             f"{m['ridge_loyo_r2']:>8.3f}  "
             f"{m['lgbm_loyo_r2']:>8.3f}  "
+            f"{gap:>5.3f}{gap_flag}  "
+            f"{f_obs:>4.3f}{f_obs_flag}  "
             f"{m['ridge_alpha']:>7.1f}  "
             f"{m['lgbm_status']:>20}"
         )
@@ -1134,7 +1231,54 @@ def main() -> None:
                 f"(n_train={rc.get('n_train',0)}, n_test={rc.get('n_test',0)})  "
                 f"K-fold R²={kc.get('r2', float('nan')):.3f}"
             )
-    print("=" * 84)
+    print("=" * 90)
+
+    # Part 1: Capital-only baseline diagnostic (standard runs only)
+    # Shows how much full ORBIT beats raw draft capital — JJ's explicit goal.
+    if not no_capital and not capital_only and dfs_eng:
+        print("\n  Running capital-only LOYO baseline (Part 1)...")
+        cap_results: dict[str, float] = {}
+        for pos in positions:
+            df_cap = dfs_eng[pos][dfs_eng[pos][args.target].notna()].copy()
+            cap_cands = [
+                f for f in _CAPITAL_FEATURES_ONLY.get(pos, [])
+                if f in df_cap.columns
+                and df_cap[f].nunique(dropna=True) > 1
+                and df_cap[f].notna().sum() >= 5
+            ]
+            if not cap_cands:
+                log.warning("  %s: no capital features available for baseline", pos)
+                cap_results[pos] = float("nan")
+                continue
+            cap_loyo = _loyo_cv(
+                df_cap, cap_cands, args.target, "ridge",
+                alpha_range=_RIDGE_ALPHA_RANGE.get(pos),
+            )
+            cap_results[pos] = float(cap_loyo["r2"])
+            log.info(
+                "  %s capital-only LOYO R²=%.3f (using %d features)",
+                pos, cap_results[pos], len(cap_cands),
+            )
+
+        print("\n=== ORBIT vs Capital-Only LOYO R² ===")
+        print(f"{'Position':8}  {'Capital-Only':>12}  {'Full ORBIT':>10}  {'Delta':>6}  {'Status':>8}")
+        print("-" * 54)
+        for pos in positions:
+            cap_r2  = cap_results.get(pos, float("nan"))
+            full_r2 = all_meta[pos]["ridge_loyo_r2"]
+            delta   = full_r2 - cap_r2 if not np.isnan(cap_r2) else float("nan")
+            if np.isnan(delta):
+                status = "N/A"
+            elif delta > _CAPITAL_DELTA_THRESHOLD:
+                status = "PASS"
+            else:
+                status = "FAIL"
+            print(
+                f"{pos:8}  {cap_r2:>12.3f}  {full_r2:>10.3f}  "
+                f"{delta:>+6.3f}  {status:>8}"
+            )
+        print(f"\n  PASS threshold: Full ORBIT LOYO > Capital-Only LOYO + {_CAPITAL_DELTA_THRESHOLD:.3f}")
+        print("=" * 54)
 
 
 if __name__ == "__main__":

@@ -658,11 +658,17 @@ def _compute_teammate_score(
     draft_year: int,
     best_team: str | None,
     cfb: dict,
-    year_window: int = 2,
+    look_back: int = 2,   # Part 5: count teammates drafted ≤ look_back years BEFORE
+    look_ahead: int = 0,  # Part 5: count teammates drafted ≤ look_ahead years AFTER
 ) -> float:
     """
     Teammate score: sum of draft_capital_score for other WR/RB/TE draftees
-    from the same school within ±year_window years of this player's draft year.
+    from the same school within the prospect's productive window.
+
+    Part 5 fix: JJ considers only the last 2 years of a player's career. The old
+    symmetric ±2 window included teammates drafted AFTER the prospect (who may never
+    have overlapped at school). Asymmetric look_back=2, look_ahead=0 fixes this:
+    only count teammates who were drafted BEFORE or in the same year as the prospect.
 
     Signals offensive context quality — a player from a school that produced
     multiple drafted skill players was in a richer passing environment.
@@ -677,7 +683,10 @@ def _compute_teammate_score(
         if not pick.get("position_drafted") or pick["position_drafted"] not in _POSITIONS:
             continue
         teammate_draft_year = pick.get("draft_year") or 0
-        if abs(teammate_draft_year - draft_year) > year_window:
+        # Asymmetric window: teammate was drafted at most look_back years before
+        # the prospect (overlapped at school) and at most look_ahead years after.
+        diff = teammate_draft_year - draft_year
+        if not (-look_back <= diff <= look_ahead):
             continue
         # Check if this player had a season at the same school
         for season in cfb["seasons"].get(pid, []):
